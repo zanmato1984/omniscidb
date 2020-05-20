@@ -227,6 +227,7 @@ target_link_libraries(
   StringDictionary
   Utils
   Shared
+  Nurgi
   sqlite3
   ${Arrow_LIBRARIES}
   clangFrontend
