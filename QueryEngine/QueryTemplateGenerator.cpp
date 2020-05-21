@@ -25,6 +25,12 @@
 //      llc -march=cpp RuntimeFunctions.ll
 // and formatting the results to be more readable.
 
+#if LLVM_VERSION_MAJOR >= 10
+#define MAYBE_ALIGN(n) MaybeAlign((n))
+#else
+#define MAYBE_ALIGN(n) (n)
+#endif
+
 namespace {
 
 template <class Attributes>
@@ -315,13 +321,13 @@ llvm::Function* query_template_impl(llvm::Module* mod,
   if (!is_estimate_query) {
     for (size_t i = 0; i < aggr_col_count; ++i) {
       auto result_ptr = new AllocaInst(i64_type, 0, "result", bb_entry);
-      result_ptr->setAlignment(8);
+      result_ptr->setAlignment(MAYBE_ALIGN(8));
       result_ptr_vec.push_back(result_ptr);
     }
   }
 
   LoadInst* row_count = new LoadInst(row_count_ptr, "row_count", false, bb_entry);
-  row_count->setAlignment(8);
+  row_count->setAlignment(MAYBE_ALIGN(8));
   row_count->setName("row_count");
   std::vector<Value*> agg_init_val_vec;
   if (!is_estimate_query) {
@@ -330,10 +336,10 @@ llvm::Function* query_template_impl(llvm::Module* mod,
       auto agg_init_gep =
           GetElementPtrInst::CreateInBounds(agg_init_val, idx_lv, "", bb_entry);
       auto agg_init_val = new LoadInst(agg_init_gep, "", false, bb_entry);
-      agg_init_val->setAlignment(8);
+      agg_init_val->setAlignment(MAYBE_ALIGN(8));
       agg_init_val_vec.push_back(agg_init_val);
       auto init_val_st = new StoreInst(agg_init_val, result_ptr_vec[i], false, bb_entry);
-      init_val_st->setAlignment(8);
+      init_val_st->setAlignment(MAYBE_ALIGN(8));
     }
   }
 
@@ -405,7 +411,7 @@ llvm::Function* query_template_impl(llvm::Module* mod,
   if (!is_estimate_query) {
     for (size_t i = 0; i < aggr_col_count; ++i) {
       auto result = new LoadInst(result_ptr_vec[i], ".pre.result", false, bb_crit_edge);
-      result->setAlignment(8);
+      result->setAlignment(MAYBE_ALIGN(8));
       result_vec_pre.push_back(result);
     }
   }
@@ -429,7 +435,7 @@ llvm::Function* query_template_impl(llvm::Module* mod,
       auto col_idx = ConstantInt::get(i32_type, i);
       auto out_gep = GetElementPtrInst::CreateInBounds(out, col_idx, "", bb_exit);
       auto col_buffer = new LoadInst(out_gep, "", false, bb_exit);
-      col_buffer->setAlignment(8);
+      col_buffer->setAlignment(MAYBE_ALIGN(8));
       auto slot_idx = BinaryOperator::CreateAdd(
           group_buff_idx,
           BinaryOperator::CreateMul(frag_idx, pos_step, "", bb_exit),
@@ -438,7 +444,7 @@ llvm::Function* query_template_impl(llvm::Module* mod,
       auto target_addr =
           GetElementPtrInst::CreateInBounds(col_buffer, slot_idx, "", bb_exit);
       StoreInst* result_st = new StoreInst(result_vec[i], target_addr, false, bb_exit);
-      result_st->setAlignment(8);
+      result_st->setAlignment(MAYBE_ALIGN(8));
     }
   }
 
@@ -616,11 +622,11 @@ llvm::Function* query_group_by_template_impl(llvm::Module* mod,
 
   // Block  .entry
   LoadInst* row_count = new LoadInst(row_count_ptr, "", false, bb_entry);
-  row_count->setAlignment(8);
+  row_count->setAlignment(MAYBE_ALIGN(8));
   row_count->setName("row_count");
 
   LoadInst* max_matched = new LoadInst(max_matched_ptr, "", false, bb_entry);
-  max_matched->setAlignment(4);
+  max_matched->setAlignment(MAYBE_ALIGN(4));
 
   auto crt_matched_ptr = new AllocaInst(i32_type, 0, "crt_matched", bb_entry);
   auto old_total_matched_ptr = new AllocaInst(i32_type, 0, "old_total_matched", bb_entry);
@@ -649,7 +655,7 @@ llvm::Function* query_group_by_template_impl(llvm::Module* mod,
       Ty->getElementType(), group_by_buffers, group_buff_idx, "", bb_entry);
   LoadInst* col_buffer = new LoadInst(group_by_buffers_gep, "", false, bb_entry);
   col_buffer->setName("col_buffer");
-  col_buffer->setAlignment(8);
+  col_buffer->setAlignment(MAYBE_ALIGN(8));
 
   llvm::ConstantInt* shared_mem_num_elements_lv = nullptr;
   llvm::ConstantInt* shared_mem_bytes_lv = nullptr;
