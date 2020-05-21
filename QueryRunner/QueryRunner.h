@@ -129,6 +129,10 @@ class QueryRunner {
                                          const bool hoist_literals,
                                          const bool allow_loop_joins,
                                          const bool just_explain = false);
+  virtual ExecutionResult runNurgiRelAlg(const std::string& nurgi_ra,
+                                         const ExecutorDeviceType device_type,
+                                         const bool allow_loop_joins,
+                                         const bool just_explain = false);
   virtual std::vector<std::shared_ptr<ResultSet>> runMultipleStatements(
       const std::string&,
       const ExecutorDeviceType);

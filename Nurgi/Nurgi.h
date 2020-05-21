@@ -16,6 +16,8 @@ struct TableData {
   std::vector<ColumnData> columns;
 };
 
-int run(std::string dag_str, const std::vector<TableData>& inputs, TableData& output);
+int run(const std::string& ra_str,
+        const std::vector<TableData>& inputs,
+        TableData& output);
 
 }  // namespace Nurgi

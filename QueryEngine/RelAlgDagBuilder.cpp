@@ -20,6 +20,8 @@
 #include "Catalog/Catalog.h"
 #include "Descriptors/RelAlgExecutionDescriptor.h"
 #include "JsonAccessors.h"
+#include "Nurgi/Catalog.h"
+#include "Nurgi/RelAlg.h"
 #include "RelAlgOptimizer.h"
 #include "RelLeftDeepInnerJoin.h"
 #include "Rendering/RenderRelAlgUtils.h"
@@ -2012,6 +2014,26 @@ std::vector<std::string> getFieldNamesFromScanNode(const rapidjson::Value& scan_
   return strings_from_json_array(fields_json);
 }
 
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
+
+const NurgiTableDescriptor* getNurgiTableFromScanNode(const rapidjson::Value& scan_ra) {
+  const auto& table_json = field(scan_ra, "table");
+  CHECK(table_json.IsArray());
+  CHECK_EQ(unsigned(1), table_json.Size());
+  CHECK(table_json[0].IsObject());
+  const auto& table_id_json = field(table_json[0], "id");
+  CHECK(table_id_json.IsInt());
+  const auto td = new Nurgi::Catalog::TableDescriptor{table_id_json.GetInt()};
+  CHECK(td);
+  return td;
+}
+
+std::vector<std::string> getNurgiFieldNamesFromScanNode(const rapidjson::Value& scan_ra) {
+  const auto& fields_json = field(scan_ra, "fieldNames");
+  return strings_from_json_array(fields_json);
+}
+
 }  // namespace
 
 bool RelProject::hasWindowFunctionExpr() const {
@@ -2039,6 +2061,8 @@ class RelAlgDispatcher {
       const auto rel_op = json_str(field(crt_node, "relOp"));
       if (rel_op == std::string("EnumerableTableScan")) {
         ra_node = dispatchTableScan(crt_node);
+      } else if (rel_op == std::string("NurgiTableScan")) {
+        ra_node = dispatchNurgiTableScan(crt_node);
       } else if (rel_op == std::string("LogicalProject")) {
         ra_node = dispatchProject(crt_node, root_dag_builder);
       } else if (rel_op == std::string("LogicalFilter")) {
@@ -2073,6 +2097,14 @@ class RelAlgDispatcher {
     const auto td = getTableFromScanNode(cat_, scan_ra);
     const auto field_names = getFieldNamesFromScanNode(scan_ra);
     return std::make_shared<RelScan>(td, field_names);
+  }
+
+  std::shared_ptr<NurgiRelScan> dispatchNurgiTableScan(
+      const rapidjson::Value& nurgi_scan_ra) {
+    CHECK(nurgi_scan_ra.IsObject());
+    const auto td = getNurgiTableFromScanNode(nurgi_scan_ra);
+    const auto field_names = getNurgiFieldNamesFromScanNode(nurgi_scan_ra);
+    return std::make_shared<NurgiRelScan>(td, field_names);
   }
 
   std::shared_ptr<RelProject> dispatchProject(const rapidjson::Value& proj_ra,
