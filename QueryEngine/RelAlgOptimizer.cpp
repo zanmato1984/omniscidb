@@ -15,6 +15,7 @@
  */
 
 #include "RelAlgOptimizer.h"
+#include "Nurgi/RelAlg.h"
 #include "RexVisitor.h"
 #include "Shared/Logger.h"
 
@@ -411,6 +412,7 @@ std::unordered_map<const RelAlgNode*, std::unordered_set<const RelAlgNode*>> bui
   std::vector<const RelAlgNode*> work_set;
   for (auto node : nodes) {
     if (std::dynamic_pointer_cast<RelScan>(node) ||
+        std::dynamic_pointer_cast<Nurgi::RelAlg::RelScan>(node) ||
         std::dynamic_pointer_cast<RelModify>(node) || visited.count(node.get())) {
       continue;
     }
@@ -437,7 +439,9 @@ std::unordered_map<const RelAlgNode*, std::unordered_set<const RelAlgNode*>> bui
             dynamic_cast<const RelLogicalUnion*>(walker));
       for (size_t i = 0; i < walker->inputCount(); ++i) {
         auto src = walker->getInput(i);
-        if (dynamic_cast<const RelScan*>(src) || dynamic_cast<const RelModify*>(src)) {
+        if (dynamic_cast<const RelScan*>(src) ||
+            dynamic_cast<const Nurgi::RelAlg::RelScan*>(src) ||
+            dynamic_cast<const RelModify*>(src)) {
           continue;
         }
         if (web.empty() || !web.count(src)) {

@@ -79,6 +79,7 @@ add_executable(CachedHashTableTest CachedHashTableTest.cpp)
 add_executable(ColumnarResultsTest ColumnarResultsTest.cpp ResultSetTestUtils.cpp)
 add_executable(CommandLineTest CommandLineTest.cpp)
 add_executable(NurgiTest NurgiTest.cpp)
+add_executable(NurgiLegacyTest NurgiLegacyTest.cpp)
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   add_executable(UdfTest UdfTest.cpp)
 endif()
@@ -147,6 +148,7 @@ target_link_libraries(CatalogMigrationTest ${THRIFT_HANDLER_TEST_LIBRARIES})
 target_link_libraries(CreateAndDropTableDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
 target_link_libraries(ShowCommandsDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
 target_link_libraries(NurgiTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(NurgiLegacyTest ${EXECUTE_TEST_LIBS})
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   target_link_libraries(UdfTest gtest ${EXECUTE_TEST_LIBS})
@@ -200,6 +202,7 @@ add_test(ShowCommandsDdlTest ShowCommandsDdlTest ${TEST_ARGS})
 add_test(CatalogMigrationTest CatalogMigrationTest ${TEST_ARGS})
 add_test(CreateAndDropTableDdlTest CreateAndDropTableDdlTest ${TEST_ARGS})
 add_test(NurgiTest NurgiTest ${TEST_ARGS})
+add_test(NurgiLegacyTest NurgiLegacyTest ${TEST_ARGS})
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   add_test(UdfTest UdfTest ${TEST_ARGS})
@@ -261,6 +264,7 @@ set(TEST_PROGRAMS
   CatalogMigrationTest
   CreateAndDropTableDdlTest
   NurgiTest
+  NurgiLegacyTest
 )
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")

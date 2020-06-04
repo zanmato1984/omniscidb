@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Catalog.h"
+#include "QueryEngine/RelAlgDagBuilder.h"
+
 namespace Nurgi {
 
 namespace RelAlg {

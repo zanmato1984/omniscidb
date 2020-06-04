@@ -18,8 +18,13 @@
 
 #include <boost/graph/topological_sort.hpp>
 
+#include "Nurgi/Catalog.h"
+#include "Nurgi/RelAlg.h"
 #include "QueryEngine/GroupByAndAggregate.h"
 #include "QueryEngine/RelAlgDagBuilder.h"
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 ExecutionResult::ExecutionResult(const std::shared_ptr<ResultSet>& rows,
                                  const std::vector<TargetMetaInfo>& targets_meta)
@@ -126,7 +131,7 @@ DAG build_dag(const RelAlgNode* sink) {
   while (!stack.empty()) {
     const auto node = stack.back();
     stack.pop_back();
-    if (dynamic_cast<const RelScan*>(node)) {
+    if (dynamic_cast<const RelScan*>(node) || dynamic_cast<const NurgiRelScan*>(node)) {
       continue;
     }
 
@@ -222,7 +227,7 @@ RaExecutionDesc* RaExecutionSequence::next() {
     }
     auto& node = graph_[vert];
     CHECK(node);
-    if (dynamic_cast<const RelScan*>(node)) {
+    if (dynamic_cast<const RelScan*>(node) || dynamic_cast<const NurgiRelScan*>(node)) {
       scan_count_++;
       continue;
     }

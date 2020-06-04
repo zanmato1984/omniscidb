@@ -17,7 +17,12 @@
 #ifndef QUERYENGINE_RELALGVISITOR_H
 #define QUERYENGINE_RELALGVISITOR_H
 
+#include "Nurgi/Catalog.h"
+#include "Nurgi/RelAlg.h"
 #include "RelAlgDagBuilder.h"
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 template <class T>
 class RelAlgVisitor {
@@ -54,6 +59,10 @@ class RelAlgVisitor {
     const auto scan = dynamic_cast<const RelScan*>(rel_alg);
     if (scan) {
       return aggregateResult(result, visitScan(scan));
+    }
+    const auto nurgi_scan = dynamic_cast<const NurgiRelScan*>(rel_alg);
+    if (nurgi_scan) {
+      return aggregateResult(result, visitNurgiScan(nurgi_scan));
     }
     const auto sort = dynamic_cast<const RelSort*>(rel_alg);
     if (sort) {
@@ -94,6 +103,8 @@ class RelAlgVisitor {
   virtual T visitProject(const RelProject*) const { return defaultResult(); }
 
   virtual T visitScan(const RelScan*) const { return defaultResult(); }
+
+  virtual T visitNurgiScan(const NurgiRelScan*) const { return defaultResult(); }
 
   virtual T visitSort(const RelSort*) const { return defaultResult(); }
 

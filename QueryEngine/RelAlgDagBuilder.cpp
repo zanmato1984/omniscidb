@@ -38,6 +38,9 @@
 extern bool g_cluster;
 extern bool g_enable_union;
 
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
+
 namespace {
 
 const unsigned FIRST_RA_NODE_ID = 1;
@@ -154,6 +157,12 @@ RANodeOutput get_node_output(const RelAlgNode* ra_node) {
     CHECK_EQ(size_t(0), scan_node->inputCount());
     return n_outputs(scan_node, scan_node->size());
   }
+  const auto nurgi_scan_node = dynamic_cast<const NurgiRelScan*>(ra_node);
+  if (nurgi_scan_node) {
+    // Nurgi scan node has no inputs, output contains all columns in the table.
+    CHECK_EQ(size_t(0), nurgi_scan_node->inputCount());
+    return n_outputs(nurgi_scan_node, nurgi_scan_node->size());
+  }
   const auto project_node = dynamic_cast<const RelProject*>(ra_node);
   if (project_node) {
     // Project output count doesn't depend on the input
@@ -262,6 +271,10 @@ bool isRenamedInput(const RelAlgNode* node,
   }
 
   if (auto scan = dynamic_cast<const RelScan*>(node)) {
+    return new_name != scan->getFieldName(index);
+  }
+
+  if (auto scan = dynamic_cast<const NurgiRelScan*>(node)) {
     return new_name != scan->getFieldName(index);
   }
 
@@ -2013,9 +2026,6 @@ std::vector<std::string> getFieldNamesFromScanNode(const rapidjson::Value& scan_
   const auto& fields_json = field(scan_ra, "fieldNames");
   return strings_from_json_array(fields_json);
 }
-
-using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
-using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 const NurgiTableDescriptor* getNurgiTableFromScanNode(const rapidjson::Value& scan_ra) {
   const auto& table_json = field(scan_ra, "table");

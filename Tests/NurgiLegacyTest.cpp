@@ -6,12 +6,16 @@
 
 using namespace Nurgi;
 
-const std::string nurgi_json = R"({"rels": [
+const std::string legacy_json = R"({"rels": [
 {
 "id": "0",
-"relOp": "NurgiTableScan",
-"fieldNames": ["1", "2"],
-"table": [{"id": 1}]
+"relOp": "EnumerableTableScan",
+"fieldNames": ["scalerank", "labelrank"],
+"table": [
+"omnisci",
+"omnisci_countries"
+],
+"inputs": []
 },
 {
 "id": "1",
@@ -28,10 +32,10 @@ const std::string nurgi_json = R"({"rels": [
 ]
 })";
 
-TEST(Nurgi, Run) {
+TEST(NurgiLegacy, Run) {
   std::vector<TableData> inputs;
   TableData output;
-  ASSERT_EQ(run(nurgi_json, inputs, output), 0);
+  ASSERT_EQ(run(legacy_json, inputs, output), 0);
 }
 
 int main(int argc, char** argv) {
