@@ -15,6 +15,8 @@
  */
 
 #include "RelAlgExecutor.h"
+#include "Nurgi/Catalog.h"
+#include "Nurgi/RelAlg.h"
 #include "Parser/ParserNode.h"
 #include "QueryEngine/CalciteDeserializerUtils.h"
 #include "QueryEngine/CardinalityEstimator.h"
@@ -43,6 +45,9 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 bool g_skip_intermediate_count{true};
 extern bool g_enable_bump_allocator;
@@ -842,8 +847,28 @@ int table_id_from_ra(const RelAlgNode* ra_node) {
     const auto td = scan_ra->getTableDescriptor();
     CHECK(td);
     return td->tableId;
+  } else if (const auto nurgi_scan_ra = dynamic_cast<const NurgiRelScan*>(ra_node);
+             nurgi_scan_ra) {
+    const auto td = nurgi_scan_ra->getTableDescriptor();
+    CHECK(td);
+    return td->id;
   }
   return -ra_node->getId();
+}
+
+std::tuple<int, bool> table_id_and_is_nurgi_from_ra(const RelAlgNode* ra_node) {
+  const auto scan_ra = dynamic_cast<const RelScan*>(ra_node);
+  if (scan_ra) {
+    const auto td = scan_ra->getTableDescriptor();
+    CHECK(td);
+    return std::make_tuple(td->tableId, false);
+  } else if (const auto nurgi_scan_ra = dynamic_cast<const NurgiRelScan*>(ra_node);
+             nurgi_scan_ra) {
+    const auto td = nurgi_scan_ra->getTableDescriptor();
+    CHECK(td);
+    return std::make_tuple(td->id, true);
+  }
+  return std::make_tuple(-ra_node->getId(), false);
 }
 
 std::unordered_map<const RelAlgNode*, int> get_input_nest_levels(
@@ -950,8 +975,8 @@ get_input_desc_impl(const RA* ra_node,
     const auto input_node_idx =
         input_permutation.empty() ? input_idx : input_permutation[input_idx];
     auto input_ra = data_sink_node->getInput(input_node_idx);
-    const int table_id = table_id_from_ra(input_ra);
-    input_descs.emplace_back(table_id, input_idx);
+    const auto [table_id, is_nurgi] = table_id_and_is_nurgi_from_ra(input_ra);
+    input_descs.emplace_back(table_id, input_idx, is_nurgi);
   }
   std::sort(input_descs.begin(),
             input_descs.end(),

@@ -22,12 +22,12 @@
 
 #include <memory>
 
-enum class InputSourceType { TABLE, RESULT };
+enum class InputSourceType { TABLE, NURGI_TABLE, RESULT };
 
 class InputDescriptor {
  public:
-  InputDescriptor(const int table_id, const int nest_level)
-      : table_id_(table_id), nest_level_(nest_level) {}
+  InputDescriptor(const int table_id, const int nest_level, bool is_nurgi_table_ = false)
+      : table_id_(table_id), nest_level_(nest_level), is_nurgi_table(is_nurgi_table_) {}
 
   bool operator==(const InputDescriptor& that) const {
     return table_id_ == that.table_id_ && nest_level_ == that.nest_level_;
@@ -38,12 +38,15 @@ class InputDescriptor {
   int getNestLevel() const { return nest_level_; }
 
   InputSourceType getSourceType() const {
-    return table_id_ > 0 ? InputSourceType::TABLE : InputSourceType::RESULT;
+    return is_nurgi_table
+               ? InputSourceType::NURGI_TABLE
+               : table_id_ > 0 ? InputSourceType::TABLE : InputSourceType::RESULT;
   }
 
  private:
   int table_id_;
   int nest_level_;
+  bool is_nurgi_table;
 };
 
 inline std::ostream& operator<<(std::ostream& os, InputDescriptor const& id) {

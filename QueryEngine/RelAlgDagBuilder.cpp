@@ -2027,21 +2027,27 @@ std::vector<std::string> getFieldNamesFromScanNode(const rapidjson::Value& scan_
   return strings_from_json_array(fields_json);
 }
 
-const NurgiTableDescriptor* getNurgiTableFromScanNode(const rapidjson::Value& scan_ra) {
+const std::shared_ptr<NurgiTableDescriptor> getNurgiTableFromScanNode(
+    const rapidjson::Value& scan_ra) {
   const auto& table_json = field(scan_ra, "table");
-  CHECK(table_json.IsArray());
-  CHECK_EQ(unsigned(1), table_json.Size());
-  CHECK(table_json[0].IsObject());
-  const auto& table_id_json = field(table_json[0], "id");
+  CHECK(table_json.IsObject());
+  const auto& table_id_json = field(table_json, "id");
   CHECK(table_id_json.IsInt());
-  const auto td = new Nurgi::Catalog::TableDescriptor{table_id_json.GetInt()};
+  const auto& table_cols_json = field(table_json, "cols");
+  CHECK(table_cols_json.IsArray());
+  Nurgi::Catalog::ColumnDescriptorVec columns;
+  for (auto cols_json_it = table_cols_json.Begin(); cols_json_it != table_cols_json.End();
+       ++cols_json_it) {
+    auto col_id = json_i64(field(*cols_json_it, "id"));
+    auto col_tp = static_cast<SQLTypes>(json_i64(field(*cols_json_it, "type")));
+    auto col_nullable = json_bool(field(*cols_json_it, "nullable"));
+    columns.emplace_back(std::make_shared<Nurgi::Catalog::ColumnDescriptor>(
+        col_id, SQLTypeInfo(col_tp, col_nullable)));
+  }
+  const auto td =
+      std::make_shared<NurgiTableDescriptor>(table_id_json.GetInt(), std::move(columns));
   CHECK(td);
   return td;
-}
-
-std::vector<std::string> getNurgiFieldNamesFromScanNode(const rapidjson::Value& scan_ra) {
-  const auto& fields_json = field(scan_ra, "fieldNames");
-  return strings_from_json_array(fields_json);
 }
 
 }  // namespace
@@ -2113,8 +2119,7 @@ class RelAlgDispatcher {
       const rapidjson::Value& nurgi_scan_ra) {
     CHECK(nurgi_scan_ra.IsObject());
     const auto td = getNurgiTableFromScanNode(nurgi_scan_ra);
-    const auto field_names = getNurgiFieldNamesFromScanNode(nurgi_scan_ra);
-    return std::make_shared<NurgiRelScan>(td, field_names);
+    return std::make_shared<NurgiRelScan>(td);
   }
 
   std::shared_ptr<RelProject> dispatchProject(const rapidjson::Value& proj_ra,

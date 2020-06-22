@@ -10,18 +10,26 @@ const std::string nurgi_json = R"({"rels": [
 {
 "id": "0",
 "relOp": "NurgiTableScan",
-"fieldNames": ["1", "2"],
-"table": [{"id": 1}]
+"table": {
+"id": 100,
+"cols": [
+{"id": 200, "type": 6, "nullable": false},
+{"id": 201, "type": 6, "nullable": false}
+]
+}
 },
 {
 "id": "1",
 "relOp": "LogicalProject",
 "fields": [
-"y"
+"y", "x"
 ],
 "exprs": [
 {
 "input": 1
+},
+{
+"input": 0
 }
 ]
 }
