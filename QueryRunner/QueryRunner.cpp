@@ -373,7 +373,7 @@ ExecutionResult run_select_query_with_filter_push_down(
                                       false,
                                       true)
                             .plan_result;
-  auto result = RelAlgExecutor(executor.get(), cat, query_ra)
+  auto result = RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
                     .executeRelAlgQuery(co, eo, false, nullptr);
   const auto& filter_push_down_requests = result.getPushedDownFilterInfo();
   if (!filter_push_down_requests.empty()) {
@@ -407,7 +407,7 @@ ExecutionResult run_select_query_with_filter_push_down(
                                        /*just_calcite_explain=*/false,
                                        eo.gpu_input_mem_limit_percent,
                                        eo.allow_runtime_query_interrupt};
-    return RelAlgExecutor(executor.get(), cat, new_query_ra)
+    return RelAlgExecutor(executor.get(), cat, new_query_ra, nullptr)
         .executeRelAlgQuery(co, eo_modified, false, nullptr);
   } else {
     return result;
@@ -463,11 +463,12 @@ ExecutionResult QueryRunner::runSelectQuery(const std::string& query_str,
                                       false,
                                       true)
                             .plan_result;
-  return RelAlgExecutor(executor.get(), cat, query_ra)
+  return RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
       .executeRelAlgQuery(co, eo, false, nullptr);
 }
 
 ExecutionResult QueryRunner::runNurgiRelAlg(const std::string& nurgi_ra,
+                                            NurgiContext* nurgi_context,
                                             const ExecutorDeviceType device_type,
                                             const bool allow_loop_joins,
                                             const bool just_explain) {
@@ -491,7 +492,7 @@ ExecutionResult QueryRunner::runNurgiRelAlg(const std::string& nurgi_ra,
                          g_gpu_mem_limit_percent,
                          false,
                          1000};
-  return RelAlgExecutor(executor.get(), cat, nurgi_ra)
+  return RelAlgExecutor(executor.get(), cat, nurgi_ra, nurgi_context)
       .executeRelAlgQuery(co, eo, false, nullptr);
 }
 

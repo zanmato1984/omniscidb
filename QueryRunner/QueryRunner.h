@@ -25,11 +25,14 @@
 #include "Catalog/SysCatalog.h"
 #include "Catalog/TableDescriptor.h"
 #include "LeafAggregator.h"
+#include "Nurgi/Nurgi.h"
 #include "QueryEngine/BaselineJoinHashTable.h"
 #include "QueryEngine/CompilationOptions.h"
 #include "QueryEngine/JoinHashTable.h"
 #include "QueryEngine/OverlapsJoinHashTable.h"
 #include "ThriftHandler/QueryState.h"
+
+using NurgiContext = Nurgi::Context;
 
 namespace Catalog_Namespace {
 class Catalog;
@@ -130,6 +133,7 @@ class QueryRunner {
                                          const bool allow_loop_joins,
                                          const bool just_explain = false);
   virtual ExecutionResult runNurgiRelAlg(const std::string& nurgi_ra,
+                                         NurgiContext* nurgi_context,
                                          const ExecutorDeviceType device_type,
                                          const bool allow_loop_joins,
                                          const bool just_explain = false);

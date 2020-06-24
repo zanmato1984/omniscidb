@@ -2300,7 +2300,7 @@ std::shared_ptr<ResultSet> getResultSet(QueryStateProxy query_state_proxy,
                          1000,
                          ExecutorType::Native,
                          outer_fragment_indices};
-  RelAlgExecutor ra_executor(executor.get(), catalog, query_ra);
+  RelAlgExecutor ra_executor(executor.get(), catalog, query_ra, nullptr);
   ExecutionResult result{std::make_shared<ResultSet>(std::vector<TargetInfo>{},
                                                      ExecutorDeviceType::CPU,
                                                      QueryMemoryDescriptor(),
@@ -2339,7 +2339,7 @@ size_t LocalConnector::getOuterFragmentCount(QueryStateProxy query_state_proxy,
   // struct
   ExecutionOptions eo = {
       false, true, false, true, false, false, false, false, 10000, false, false, 0.9};
-  RelAlgExecutor ra_executor(executor.get(), catalog, query_ra);
+  RelAlgExecutor ra_executor(executor.get(), catalog, query_ra, nullptr);
   return ra_executor.getOuterFragmentCount(co, eo);
 }
 

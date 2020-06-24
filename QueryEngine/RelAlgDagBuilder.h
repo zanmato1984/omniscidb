@@ -27,10 +27,12 @@
 #include "Shared/ConfigResolve.h"
 #include "Shared/sql_window_function_to_string.h"
 
+#include "Nurgi/Nurgi.h"
 #include "QueryEngine/Rendering/RenderInfo.h"
 #include "QueryEngine/TargetMetaInfo.h"
 #include "QueryEngine/TypePunning.h"
 
+using NurgiContext = Nurgi::Context;
 using ColumnNameList = std::vector<std::string>;
 
 class Rex {
@@ -1552,6 +1554,7 @@ class RelAlgDagBuilder : public boost::noncopyable {
    * @param render_opts Additional build options for render queries.
    */
   RelAlgDagBuilder(const std::string& query_ra,
+                   NurgiContext* nurgi_context,
                    const Catalog_Namespace::Catalog& cat,
                    const RenderInfo* render_info);
 
@@ -1605,7 +1608,9 @@ class RelAlgDagBuilder : public boost::noncopyable {
   void resetQueryExecutionState();
 
  private:
-  void build(const rapidjson::Value& query_ast, RelAlgDagBuilder& root_dag_builder);
+  void build(const rapidjson::Value& query_ast,
+             NurgiContext* nurgi_context,
+             RelAlgDagBuilder& root_dag_builder);
 
   const Catalog_Namespace::Catalog& cat_;
   std::vector<std::shared_ptr<RelAlgNode>> nodes_;

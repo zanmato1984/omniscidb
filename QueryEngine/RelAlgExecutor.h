@@ -18,6 +18,7 @@
 #define QUERYENGINE_RELALGEXECUTOR_H
 
 #include "Distributed/AggregatedResult.h"
+#include "Nurgi/Nurgi.h"
 #include "QueryEngine/Descriptors/RelAlgExecutionDescriptor.h"
 #include "QueryEngine/Execute.h"
 #include "QueryEngine/InputMetadata.h"
@@ -33,6 +34,8 @@
 #include <sstream>
 
 #include "StorageIOFacility.h"
+
+using NurgiContext = Nurgi::Context;
 
 extern bool g_skip_intermediate_count;
 
@@ -68,11 +71,13 @@ class RelAlgExecutor : private StorageIOFacility<RelAlgExecutorTraits> {
   RelAlgExecutor(Executor* executor,
                  const Catalog_Namespace::Catalog& cat,
                  const std::string& query_ra,
+                 NurgiContext* nurgi_context,
                  std::shared_ptr<const query_state::QueryState> query_state = nullptr)
       : StorageIOFacility(executor, cat)
       , executor_(executor)
       , cat_(cat)
-      , query_dag_(std::make_unique<RelAlgDagBuilder>(query_ra, cat_, nullptr))
+      , query_dag_(
+            std::make_unique<RelAlgDagBuilder>(query_ra, nurgi_context, cat_, nullptr))
       , query_state_(std::move(query_state))
       , now_(0)
       , queue_time_ms_(0) {}

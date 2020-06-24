@@ -5,10 +5,9 @@
 
 namespace Nurgi {
 
-int run(const std::string& ra_str,
-        const std::vector<TableData>& inputs,
-        TableData& output) {
-  QueryRunner::QueryRunner::get()->runNurgiRelAlg(ra_str, ExecutorDeviceType::CPU, true);
+int run(const std::string& ra_str, Context& context) {
+  QueryRunner::QueryRunner::get()->runNurgiRelAlg(
+      ra_str, &context, ExecutorDeviceType::CPU, true);
   return 0;
 }
 

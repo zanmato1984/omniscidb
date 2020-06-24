@@ -2028,7 +2028,8 @@ std::vector<std::string> getFieldNamesFromScanNode(const rapidjson::Value& scan_
 }
 
 const std::shared_ptr<NurgiTableDescriptor> getNurgiTableFromScanNode(
-    const rapidjson::Value& scan_ra) {
+    const rapidjson::Value& scan_ra,
+    NurgiContext* nurgi_context) {
   const auto& table_json = field(scan_ra, "table");
   CHECK(table_json.IsObject());
   const auto& table_id_json = field(table_json, "id");
@@ -2064,7 +2065,8 @@ namespace details {
 
 class RelAlgDispatcher {
  public:
-  RelAlgDispatcher(const Catalog_Namespace::Catalog& cat) : cat_(cat) {}
+  RelAlgDispatcher(NurgiContext* nurgi_context, const Catalog_Namespace::Catalog& cat)
+      : nurgi_context_(nurgi_context), cat_(cat) {}
 
   std::vector<std::shared_ptr<RelAlgNode>> run(const rapidjson::Value& rels,
                                                RelAlgDagBuilder& root_dag_builder) {
@@ -2118,7 +2120,7 @@ class RelAlgDispatcher {
   std::shared_ptr<NurgiRelScan> dispatchNurgiTableScan(
       const rapidjson::Value& nurgi_scan_ra) {
     CHECK(nurgi_scan_ra.IsObject());
-    const auto td = getNurgiTableFromScanNode(nurgi_scan_ra);
+    const auto td = getNurgiTableFromScanNode(nurgi_scan_ra, nurgi_context_);
     return std::make_shared<NurgiRelScan>(td);
   }
 
@@ -2397,6 +2399,7 @@ class RelAlgDispatcher {
     return nodes_.back();
   }
 
+  NurgiContext* nurgi_context_;
   const Catalog_Namespace::Catalog& cat_;
   std::vector<std::shared_ptr<RelAlgNode>> nodes_;
 };
@@ -2404,6 +2407,7 @@ class RelAlgDispatcher {
 }  // namespace details
 
 RelAlgDagBuilder::RelAlgDagBuilder(const std::string& query_ra,
+                                   NurgiContext* nurgi_context,
                                    const Catalog_Namespace::Catalog& cat,
                                    const RenderInfo* render_info)
     : cat_(cat), render_info_(render_info) {
@@ -2421,7 +2425,7 @@ RelAlgDagBuilder::RelAlgDagBuilder(const std::string& query_ra,
   }
   CHECK(query_ast.IsObject());
   RelAlgNode::resetRelAlgFirstId();
-  build(query_ast, *this);
+  build(query_ast, nurgi_context, *this);
 }
 
 RelAlgDagBuilder::RelAlgDagBuilder(RelAlgDagBuilder& root_dag_builder,
@@ -2429,15 +2433,16 @@ RelAlgDagBuilder::RelAlgDagBuilder(RelAlgDagBuilder& root_dag_builder,
                                    const Catalog_Namespace::Catalog& cat,
                                    const RenderInfo* render_info)
     : cat_(cat), render_info_(render_info) {
-  build(query_ast, root_dag_builder);
+  build(query_ast, nullptr, root_dag_builder);
 }
 
 void RelAlgDagBuilder::build(const rapidjson::Value& query_ast,
+                             NurgiContext* nurgi_context,
                              RelAlgDagBuilder& lead_dag_builder) {
   const auto& rels = field(query_ast, "rels");
   CHECK(rels.IsArray());
   try {
-    nodes_ = details::RelAlgDispatcher(cat_).run(rels, lead_dag_builder);
+    nodes_ = details::RelAlgDispatcher(nullptr, cat_).run(rels, lead_dag_builder);
   } catch (const QueryNotSupported&) {
     throw;
   }

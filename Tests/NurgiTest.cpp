@@ -37,9 +37,10 @@ const std::string nurgi_json = R"({"rels": [
 })";
 
 TEST(Nurgi, Run) {
-  std::vector<TableData> inputs;
+  std::vector<const TableData> inputs;
   TableData output;
-  ASSERT_EQ(run(nurgi_json, inputs, output), 0);
+  Context context{inputs, output};
+  ASSERT_EQ(run(nurgi_json, context), 0);
 }
 
 int main(int argc, char** argv) {
