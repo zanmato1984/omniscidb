@@ -231,6 +231,14 @@ class ColumnVar : public Expr {
   int rte_idx;    // 0-based range table index, used for table ordering in multi-joins
 };
 
+class NurgiColumnVar : public ColumnVar {
+ public:
+  NurgiColumnVar(const SQLTypeInfo& ti, int r, int c, int i) : ColumnVar(ti, r, c, i) {}
+  std::shared_ptr<Analyzer::Expr> deep_copy() const override;
+  bool operator==(const Expr& rhs) const override;
+  std::string toString() const override;
+};
+
 /*
  * @type ExpressionTuple
  * @brief A tuple of expressions on the side of an equi-join on multiple columns.

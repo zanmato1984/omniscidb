@@ -72,7 +72,7 @@ std::vector<ssize_t> target_expr_proj_indices(const RelAlgExecutionUnit& ra_exe_
   }
   for (const auto& target : ra_exe_unit.target_exprs) {
     const auto col_var = dynamic_cast<const Analyzer::ColumnVar*>(target);
-    if (col_var) {
+    if (col_var && !dynamic_cast<const Analyzer::NurgiColumnVar*>(col_var)) {
       const auto cd = get_column_descriptor_maybe(
           col_var->get_column_id(), col_var->get_table_id(), cat);
       if (!cd || !cd->isVirtualCol) {

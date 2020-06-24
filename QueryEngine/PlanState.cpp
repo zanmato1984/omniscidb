@@ -22,7 +22,8 @@ bool PlanState::isLazyFetchColumn(const Analyzer::Expr* target_expr) {
     return false;
   }
   const auto do_not_fetch_column = dynamic_cast<const Analyzer::ColumnVar*>(target_expr);
-  if (!do_not_fetch_column || dynamic_cast<const Analyzer::Var*>(do_not_fetch_column)) {
+  if (!do_not_fetch_column || dynamic_cast<const Analyzer::Var*>(do_not_fetch_column) ||
+      dynamic_cast<const Analyzer::NurgiColumnVar*>(do_not_fetch_column)) {
     return false;
   }
   if (do_not_fetch_column->get_table_id() > 0) {

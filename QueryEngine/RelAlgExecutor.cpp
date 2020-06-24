@@ -856,19 +856,20 @@ int table_id_from_ra(const RelAlgNode* ra_node) {
   return -ra_node->getId();
 }
 
-std::tuple<int, bool> table_id_and_is_nurgi_from_ra(const RelAlgNode* ra_node) {
+std::tuple<int, std::shared_ptr<NurgiTableDescriptor>> table_id_and_nurgi_td_from_ra(
+    const RelAlgNode* ra_node) {
   const auto scan_ra = dynamic_cast<const RelScan*>(ra_node);
   if (scan_ra) {
     const auto td = scan_ra->getTableDescriptor();
     CHECK(td);
-    return std::make_tuple(td->tableId, false);
+    return std::make_tuple(td->tableId, nullptr);
   } else if (const auto nurgi_scan_ra = dynamic_cast<const NurgiRelScan*>(ra_node);
              nurgi_scan_ra) {
     const auto td = nurgi_scan_ra->getTableDescriptor();
     CHECK(td);
-    return std::make_tuple(td->id, true);
+    return std::make_tuple(td->id, td);
   }
-  return std::make_tuple(-ra_node->getId(), false);
+  return std::make_tuple(-ra_node->getId(), nullptr);
 }
 
 std::unordered_map<const RelAlgNode*, int> get_input_nest_levels(
@@ -944,7 +945,7 @@ void collect_used_input_desc(
           << " source_used_inputs.size()=" << source_used_inputs.size();
   for (const auto used_input : source_used_inputs) {
     const auto input_ra = used_input->getSourceNode();
-    const int table_id = table_id_from_ra(input_ra);
+    const auto [table_id, td] = table_id_and_nurgi_td_from_ra(input_ra);
     const auto col_id = used_input->getIndex();
     auto it = input_to_nest_level.find(input_ra);
     if (it != input_to_nest_level.end()) {
@@ -954,7 +955,8 @@ void collect_used_input_desc(
               ? cat.getColumnIdBySpi(table_id, col_id + 1)
               : col_id,
           table_id,
-          input_desc));
+          input_desc,
+          td));
     } else if (!dynamic_cast<const RelLogicalUnion*>(ra_node)) {
       throw std::runtime_error("Bushy joins not supported");
     }
@@ -975,8 +977,8 @@ get_input_desc_impl(const RA* ra_node,
     const auto input_node_idx =
         input_permutation.empty() ? input_idx : input_permutation[input_idx];
     auto input_ra = data_sink_node->getInput(input_node_idx);
-    const auto [table_id, is_nurgi] = table_id_and_is_nurgi_from_ra(input_ra);
-    input_descs.emplace_back(table_id, input_idx, is_nurgi);
+    const auto [table_id, td] = table_id_and_nurgi_td_from_ra(input_ra);
+    input_descs.emplace_back(table_id, input_idx, td);
   }
   std::sort(input_descs.begin(),
             input_descs.end(),

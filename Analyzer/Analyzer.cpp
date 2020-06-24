@@ -60,6 +60,10 @@ std::shared_ptr<Analyzer::Expr> ColumnVar::deep_copy() const {
   return makeExpr<ColumnVar>(type_info, table_id, column_id, rte_idx);
 }
 
+std::shared_ptr<Analyzer::Expr> NurgiColumnVar::deep_copy() const {
+  return makeExpr<NurgiColumnVar>(type_info, table_id, column_id, rte_idx);
+}
+
 void ExpressionTuple::collect_rte_idx(std::set<int>& rte_idx_set) const {
   for (const auto column : tuple_) {
     column->collect_rte_idx(rte_idx_set);
@@ -1962,6 +1966,27 @@ bool ColumnVar::operator==(const Expr& rhs) const {
          (v->get_varno() == rv->get_varno());
 }
 
+bool NurgiColumnVar::operator==(const Expr& rhs) const {
+  if (typeid(rhs) != typeid(NurgiColumnVar) && typeid(rhs) != typeid(Var)) {
+    return false;
+  }
+  const NurgiColumnVar& rhs_cv = dynamic_cast<const NurgiColumnVar&>(rhs);
+  if (rte_idx != -1) {
+    return (table_id == rhs_cv.get_table_id()) && (column_id == rhs_cv.get_column_id()) &&
+           (rte_idx == rhs_cv.get_rte_idx());
+  }
+  const Var* v = dynamic_cast<const Var*>(this);
+  if (v == nullptr) {
+    return false;
+  }
+  const Var* rv = dynamic_cast<const Var*>(&rhs);
+  if (rv == nullptr) {
+    return false;
+  }
+  return (v->get_which_row() == rv->get_which_row()) &&
+         (v->get_varno() == rv->get_varno());
+}
+
 bool ExpressionTuple::operator==(const Expr& rhs) const {
   const auto rhs_tuple = dynamic_cast<const ExpressionTuple*>(&rhs);
   if (!rhs_tuple) {
@@ -2286,6 +2311,12 @@ bool GeoExpr::operator==(const Expr& rhs) const {
 
 std::string ColumnVar::toString() const {
   return "(ColumnVar table: " + std::to_string(table_id) +
+         " column: " + std::to_string(column_id) + " rte: " + std::to_string(rte_idx) +
+         " " + get_type_info().get_type_name() + ") ";
+}
+
+std::string NurgiColumnVar::toString() const {
+  return "(NurgiColumnVar table: " + std::to_string(table_id) +
          " column: " + std::to_string(column_id) + " rte: " + std::to_string(rte_idx) +
          " " + get_type_info().get_type_name() + ") ";
 }

@@ -18,35 +18,42 @@
 #define QUERYENGINE_INPUTDESCRIPTORS_H
 
 #include "../Catalog/TableDescriptor.h"
+#include "../Nurgi/Catalog.h"
 #include "Shared/Logger.h"
 
 #include <memory>
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 
 enum class InputSourceType { TABLE, NURGI_TABLE, RESULT };
 
 class InputDescriptor {
  public:
-  InputDescriptor(const int table_id, const int nest_level, bool is_nurgi_table_ = false)
-      : table_id_(table_id), nest_level_(nest_level), is_nurgi_table(is_nurgi_table_) {}
+  InputDescriptor(const int table_id,
+                  const int nest_level,
+                  std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr)
+      : table_id_(table_id), nest_level_(nest_level), nurgi_td_(nurgi_td) {}
 
   bool operator==(const InputDescriptor& that) const {
-    return table_id_ == that.table_id_ && nest_level_ == that.nest_level_;
+    return table_id_ == that.table_id_ && nest_level_ == that.nest_level_ &&
+           nurgi_td_ == that.nurgi_td_;
   }
 
   int getTableId() const { return table_id_; }
 
   int getNestLevel() const { return nest_level_; }
 
+  std::shared_ptr<NurgiTableDescriptor> getNurgiTableDesc() const { return nurgi_td_; }
+
   InputSourceType getSourceType() const {
-    return is_nurgi_table
-               ? InputSourceType::NURGI_TABLE
-               : table_id_ > 0 ? InputSourceType::TABLE : InputSourceType::RESULT;
+    return nurgi_td_ ? InputSourceType::NURGI_TABLE
+                     : table_id_ > 0 ? InputSourceType::TABLE : InputSourceType::RESULT;
   }
 
  private:
   int table_id_;
   int nest_level_;
-  bool is_nurgi_table;
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td_;
 };
 
 inline std::ostream& operator<<(std::ostream& os, InputDescriptor const& id) {
@@ -65,8 +72,11 @@ struct hash<InputDescriptor> {
 
 class InputColDescriptor {
  public:
-  InputColDescriptor(const int col_id, const int table_id, const int nest_level)
-      : col_id_(col_id), input_desc_(table_id, nest_level) {}
+  InputColDescriptor(const int col_id,
+                     const int table_id,
+                     const int nest_level,
+                     std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr)
+      : col_id_(col_id), input_desc_(table_id, nest_level, nurgi_td) {}
 
   bool operator==(const InputColDescriptor& that) const {
     return col_id_ == that.col_id_ && input_desc_ == that.input_desc_;

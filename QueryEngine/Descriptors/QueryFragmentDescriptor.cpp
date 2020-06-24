@@ -210,7 +210,8 @@ void QueryFragmentDescriptor::buildFragmentPerKernelMap(
   const auto num_bytes_for_row = executor->getNumBytesForFetchedRow();
 
   const ColumnDescriptor* deleted_cd{nullptr};
-  if (outer_table_id > 0) {
+  if (outer_table_id > 0 &&
+      outer_table_desc.getSourceType() != InputSourceType::NURGI_TABLE) {
     // Intermediate tables will not have a table descriptor and will also not have deleted
     // rows.
     const auto& catalog = executor->getCatalog();

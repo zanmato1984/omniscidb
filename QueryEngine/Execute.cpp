@@ -1978,7 +1978,9 @@ const ColumnDescriptor* try_get_column_descriptor(const InputColDescriptor* col_
                                                   const Catalog_Namespace::Catalog& cat) {
   const int table_id = col_desc->getScanDesc().getTableId();
   const int col_id = col_desc->getColId();
-  return get_column_descriptor_maybe(col_id, table_id, cat);
+  return col_desc->getScanDesc().getSourceType() == InputSourceType::NURGI_TABLE
+             ? nullptr
+             : get_column_descriptor_maybe(col_id, table_id, cat);
 }
 
 }  // namespace

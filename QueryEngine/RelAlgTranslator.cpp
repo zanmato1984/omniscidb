@@ -24,6 +24,8 @@
 #include "ExpressionRewrite.h"
 #include "ExtensionFunctionsBinding.h"
 #include "ExtensionFunctionsWhitelist.h"
+#include "Nurgi/Catalog.h"
+#include "Nurgi/RelAlg.h"
 #include "RelAlgDagBuilder.h"
 #include "WindowContext.h"
 
@@ -34,6 +36,9 @@
 #include "../Shared/likely.h"
 #include "../Shared/sql_type_to_string.h"
 #include "../Shared/thread_count.h"
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 extern bool g_enable_watchdog;
 
@@ -381,6 +386,25 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateInput(
     }
     return std::make_shared<Analyzer::ColumnVar>(
         col_ti, table_desc->tableId, cd->columnId, rte_idx);
+  } else if (const auto nurgi_scan_source = dynamic_cast<const NurgiRelScan*>(source);
+             nurgi_scan_source) {
+    // We're at leaf (scan) level and not supposed to have input metadata,
+    // the name and type information come directly from the catalog.
+    CHECK(in_metainfo.empty());
+    const auto table_desc = nurgi_scan_source->getTableDescriptor();
+    CHECK_LT(rex_input->getIndex(), table_desc->columns.size());
+    const auto col_desc = table_desc->columns[rex_input->getIndex()];
+    CHECK(col_desc);
+    auto col_ti = col_desc->type;
+    if (col_ti.is_string()) {
+      col_ti.set_type(kTEXT);
+    }
+    CHECK_LE(static_cast<size_t>(rte_idx), join_types_.size());
+    if (rte_idx > 0 && join_types_[rte_idx - 1] == JoinType::LEFT) {
+      col_ti.set_notnull(false);
+    }
+    return std::make_shared<Analyzer::NurgiColumnVar>(
+        col_ti, table_desc->id, col_desc->id, rte_idx);
   }
   CHECK(!in_metainfo.empty()) << "for " << source->toString();
   CHECK_GE(rte_idx, 0);
