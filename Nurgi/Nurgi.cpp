@@ -5,7 +5,7 @@
 
 namespace Nurgi {
 
-int run(const std::string& ra_str, Context& context) {
+int runMat(const std::string& ra_str, Context& context) {
   auto device_type =
 #ifdef HAVE_CUDA
       ExecutorDeviceType::GPU

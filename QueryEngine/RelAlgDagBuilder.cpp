@@ -2047,7 +2047,7 @@ const std::shared_ptr<NurgiTableDescriptor> getNurgiTableFromScanNode(
   }
   auto table_id = table_id_json.GetInt();
   const auto td = std::make_shared<NurgiTableDescriptor>(
-      table_id, std::move(columns), nurgi_context->inputs[table_id]);
+      table_id, std::move(columns), nurgi_context->mat_inputs[table_id]);
   CHECK(td);
   return td;
 }
