@@ -628,9 +628,6 @@ TEST(Truncate, JoinCacheInvalidationTest) {
 }
 
 TEST(Update, JoinCacheInvalidationTest) {
-  if (!std::is_same<CalciteUpdatePathSelector, PreprocessorTrue>::value) {
-    return;
-  }
   for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
     SKIP_NO_GPU();
 
@@ -677,9 +674,6 @@ TEST(Update, JoinCacheInvalidationTest) {
 }
 
 TEST(Delete, JoinCacheInvalidationTest) {
-  if (std::is_same<CalciteDeletePathSelector, PreprocessorFalse>::value) {
-    return;
-  }
   for (auto dt : {ExecutorDeviceType::CPU, ExecutorDeviceType::GPU}) {
     SKIP_NO_GPU();
 
@@ -775,11 +769,8 @@ TEST(Delete, JoinCacheInvalidationTest_DropTable) {
 }
 
 int main(int argc, char** argv) {
+  TestHelpers::init_logger_stderr_only(argc, argv);
   testing::InitGoogleTest(&argc, argv);
-
-  logger::LogOptions log_options(argv[0]);
-  log_options.severity_ = logger::Severity::DEBUG1;
-  logger::init(log_options);
 
   QR::init(BASE_PATH);
 

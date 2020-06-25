@@ -29,7 +29,8 @@ inline int64_t fixed_encoding_nullable_val(const int64_t val,
                                            const SQLTypeInfo& type_info) {
   if (type_info.get_compression() != kENCODING_NONE) {
     CHECK(type_info.get_compression() == kENCODING_FIXED ||
-          type_info.get_compression() == kENCODING_DICT);
+          type_info.get_compression() == kENCODING_DICT ||
+          type_info.get_compression() == kENCODING_PACKED_PIXEL_COORD);
     auto logical_ti = get_logical_type_info(type_info);
     if (val == inline_int_null_val(logical_ti)) {
       return inline_fixed_encoding_null_val(type_info);
@@ -40,12 +41,11 @@ inline int64_t fixed_encoding_nullable_val(const int64_t val,
 
 }  // namespace
 
-ColumnarResults::ColumnarResults(
-    const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
-    const ResultSet& rows,
-    const size_t num_columns,
-    const std::vector<SQLTypeInfo>& target_types,
-    const bool is_parallel_execution_enforced)
+ColumnarResults::ColumnarResults(std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+                                 const ResultSet& rows,
+                                 const size_t num_columns,
+                                 const std::vector<SQLTypeInfo>& target_types,
+                                 const bool is_parallel_execution_enforced)
     : column_buffers_(num_columns)
     , num_rows_(use_parallel_algorithms(rows) || rows.isDirectColumnarConversionPossible()
                     ? rows.entryCount()
@@ -66,9 +66,8 @@ ColumnarResults::ColumnarResults(
     }
     if (!isDirectColumnarConversionPossible() ||
         !rows.isZeroCopyColumnarConversionPossible(i)) {
-      column_buffers_[i] = reinterpret_cast<int8_t*>(
-          checked_malloc(num_rows_ * target_types[i].get_size()));
-      row_set_mem_owner->addColBuffer(column_buffers_[i]);
+      column_buffers_[i] =
+          row_set_mem_owner->allocate(num_rows_ * target_types[i].get_size());
     }
   }
 
@@ -79,11 +78,10 @@ ColumnarResults::ColumnarResults(
   }
 }
 
-ColumnarResults::ColumnarResults(
-    const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
-    const int8_t* one_col_buffer,
-    const size_t num_rows,
-    const SQLTypeInfo& target_type)
+ColumnarResults::ColumnarResults(std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+                                 const int8_t* one_col_buffer,
+                                 const size_t num_rows,
+                                 const SQLTypeInfo& target_type)
     : column_buffers_(1)
     , num_rows_(num_rows)
     , target_types_{target_type}
@@ -98,13 +96,12 @@ ColumnarResults::ColumnarResults(
     throw ColumnarConversionNotSupported();
   }
   const auto buf_size = num_rows * target_type.get_size();
-  column_buffers_[0] = reinterpret_cast<int8_t*>(checked_malloc(buf_size));
+  column_buffers_[0] = reinterpret_cast<int8_t*>(row_set_mem_owner->allocate(buf_size));
   memcpy(((void*)column_buffers_[0]), one_col_buffer, buf_size);
-  row_set_mem_owner->addColBuffer(column_buffers_[0]);
 }
 
 std::unique_ptr<ColumnarResults> ColumnarResults::mergeResults(
-    const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
+    std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner,
     const std::vector<std::unique_ptr<ColumnarResults>>& sub_results) {
   if (sub_results.empty()) {
     return nullptr;
@@ -128,10 +125,8 @@ std::unique_ptr<ColumnarResults> ColumnarResults::mergeResults(
   }
   for (size_t col_idx = 0; col_idx < col_count; ++col_idx) {
     const auto byte_width = (*nonempty_it)->getColumnType(col_idx).get_size();
-    auto write_ptr =
-        reinterpret_cast<int8_t*>(checked_malloc(byte_width * total_row_count));
+    auto write_ptr = row_set_mem_owner->allocate(byte_width * total_row_count);
     merged_results->column_buffers_.push_back(write_ptr);
-    row_set_mem_owner->addColBuffer(write_ptr);
     for (auto& rs : sub_results) {
       CHECK_EQ(col_count, rs->column_buffers_.size());
       if (!rs->size()) {

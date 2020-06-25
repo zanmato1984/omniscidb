@@ -37,11 +37,11 @@ class NoneEncoder : public Encoder {
       , dataMax(std::numeric_limits<T>::lowest())
       , has_nulls(false) {}
 
-  ChunkMetadata appendData(int8_t*& src_data,
-                           const size_t num_elems_to_append,
-                           const SQLTypeInfo&,
-                           const bool replicating = false,
-                           const int64_t offset = -1) override {
+  std::shared_ptr<ChunkMetadata> appendData(int8_t*& src_data,
+                                            const size_t num_elems_to_append,
+                                            const SQLTypeInfo&,
+                                            const bool replicating = false,
+                                            const int64_t offset = -1) override {
     T* unencodedData = reinterpret_cast<T*>(src_data);
     std::vector<T> encoded_data;
     if (replicating) {
@@ -49,16 +49,9 @@ class NoneEncoder : public Encoder {
     }
     for (size_t i = 0; i < num_elems_to_append; ++i) {
       size_t ri = replicating ? 0 : i;
-      T data = unencodedData[ri];
+      T data = validateDataAndUpdateStats(unencodedData[ri]);
       if (replicating) {
         encoded_data[i] = data;
-      }
-      if (data == none_encoded_null_value<T>()) {
-        has_nulls = true;
-      } else {
-        decimal_overflow_validator_.validate(data);
-        dataMin = std::min(dataMin, data);
-        dataMax = std::max(dataMax, data);
       }
     }
     if (offset == -1) {
@@ -76,21 +69,20 @@ class NoneEncoder : public Encoder {
       buffer_->write(
           src_data, num_elems_to_append * sizeof(T), static_cast<size_t>(offset));
     }
-    ChunkMetadata chunkMetadata;
-    getMetadata(chunkMetadata);
-
-    return chunkMetadata;
+    auto chunk_metadata = std::make_shared<ChunkMetadata>();
+    getMetadata(chunk_metadata);
+    return chunk_metadata;
   }
 
-  void getMetadata(ChunkMetadata& chunkMetadata) override {
+  void getMetadata(const std::shared_ptr<ChunkMetadata>& chunkMetadata) override {
     Encoder::getMetadata(chunkMetadata);  // call on parent class
-    chunkMetadata.fillChunkStats(dataMin, dataMax, has_nulls);
+    chunkMetadata->fillChunkStats(dataMin, dataMax, has_nulls);
   }
 
   // Only called from the executor for synthesized meta-information.
-  ChunkMetadata getMetadata(const SQLTypeInfo& ti) override {
-    ChunkMetadata chunk_metadata{ti, 0, 0, ChunkStats{}};
-    chunk_metadata.fillChunkStats(dataMin, dataMax, has_nulls);
+  std::shared_ptr<ChunkMetadata> getMetadata(const SQLTypeInfo& ti) override {
+    auto chunk_metadata = std::make_shared<ChunkMetadata>(ti, 0, 0, ChunkStats{});
+    chunk_metadata->fillChunkStats(dataMin, dataMax, has_nulls);
     return chunk_metadata;
   }
 
@@ -116,18 +108,23 @@ class NoneEncoder : public Encoder {
     }
   }
 
-  void updateStats(const int8_t* const dst, const size_t numElements) override {
-    const T* unencodedData = reinterpret_cast<const T*>(dst);
-    for (size_t i = 0; i < numElements; ++i) {
-      T data = unencodedData[i];
-      if (data != none_encoded_null_value<T>()) {
-        decimal_overflow_validator_.validate(data);
-        dataMin = std::min(dataMin, data);
-        dataMax = std::max(dataMax, data);
-      } else {
-        has_nulls = true;
-      }
+  void updateStats(const int8_t* const src_data, const size_t num_elements) override {
+    const T* unencoded_data = reinterpret_cast<const T*>(src_data);
+    for (size_t i = 0; i < num_elements; ++i) {
+      validateDataAndUpdateStats(unencoded_data[i]);
     }
+  }
+
+  void updateStats(const std::vector<std::string>* const src_data,
+                   const size_t start_idx,
+                   const size_t num_elements) override {
+    UNREACHABLE();
+  }
+
+  void updateStats(const std::vector<ArrayDatum>* const src_data,
+                   const size_t start_idx,
+                   const size_t num_elements) override {
+    UNREACHABLE();
   }
 
   // Only called from the executor for synthesized meta-information.
@@ -182,6 +179,17 @@ class NoneEncoder : public Encoder {
   T dataMax;
   bool has_nulls;
 
+ private:
+  T validateDataAndUpdateStats(const T& unencoded_data) {
+    if (unencoded_data == none_encoded_null_value<T>()) {
+      has_nulls = true;
+    } else {
+      decimal_overflow_validator_.validate(unencoded_data);
+      dataMin = std::min(dataMin, unencoded_data);
+      dataMax = std::max(dataMax, unencoded_data);
+    }
+    return unencoded_data;
+  }
 };  // class NoneEncoder
 
 #endif  // NONE_ENCODER_H

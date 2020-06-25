@@ -45,9 +45,8 @@
 #include "QueryEngine/ExtensionFunctionsWhitelist.h"
 #include "QueryEngine/GpuMemUtils.h"
 #include "QueryEngine/JsonAccessors.h"
+#include "QueryEngine/QueryDispatchQueue.h"
 #include "QueryEngine/TableGenerations.h"
-#include "QueryState.h"
-#include "Shared/ConfigResolve.h"
 #include "Shared/GenericTypeUtilities.h"
 #include "Shared/Logger.h"
 #include "Shared/StringTransform.h"
@@ -175,16 +174,22 @@ class DBHandler : public OmniSciIf {
             const int num_gpus,
             const int start_gpu,
             const size_t reserved_gpu_mem,
+            const bool render_compositor_use_last_gpu,
             const size_t num_reader_threads,
             const AuthMetadata& authMetadata,
-            const SystemParameters& mapd_parameters,
+            const SystemParameters& system_parameters,
             const bool legacy_syntax,
             const int idle_session_duration,
             const int max_session_duration,
             const bool enable_runtime_udf_registration,
             const std::string& udf_filename,
             const std::string& clang_path,
-            const std::vector<std::string>& clang_options);
+            const std::vector<std::string>& clang_options
+#ifdef ENABLE_GEOS
+            ,
+            const std::string& libgeos_so_filename
+#endif
+  );
 
   ~DBHandler() override;
 
@@ -194,6 +199,9 @@ class DBHandler : public OmniSciIf {
   //         This block must be keep in sync with mapd.thrift and HAHandler.h
   //         Please keep in same order for easy check and cut and paste
   // Important ****
+  static void parser_with_error_handler(
+      const std::string& query_str,
+      std::list<std::unique_ptr<Parser::Stmt>>& parse_trees);
 
   void krb5_connect(TKrb5Session& session,
                     const std::string& token,
@@ -281,9 +289,10 @@ class DBHandler : public OmniSciIf {
                      const int32_t device_id) override;
   void interrupt(const TSessionId& query_session,
                  const TSessionId& interrupt_session) override;
-  void sql_validate(TTableDescriptor& _return,
+  void sql_validate(TRowDescriptor& _return,
                     const TSessionId& session,
                     const std::string& query) override;
+
   void set_execution_mode(const TSessionId& session,
                           const TExecuteMode::type mode) override;
   void render_vega(TRenderResult& _return,
@@ -401,6 +410,9 @@ class DBHandler : public OmniSciIf {
                               const std::string& file_name,
                               const TCopyParams& copy_params) override;
   // distributed
+  int64_t query_get_outer_fragment_count(const TSessionId& session,
+                                         const std::string& select_query) override;
+
   void check_table_consistency(TTableMeta& _return,
                                const TSessionId& session,
                                const int32_t table_id) override;
@@ -408,7 +420,8 @@ class DBHandler : public OmniSciIf {
                    const TSessionId& leaf_session,
                    const TSessionId& parent_session,
                    const std::string& query_ra,
-                   const bool just_explain) override;
+                   const bool just_explain,
+                   const std::vector<int64_t>& outer_fragment_indices) override;
   void execute_query_step(TStepResult& _return,
                           const TPendingQuery& pending_query) override;
   void broadcast_serialized_rows(const TSerializedRows& serialized_rows,
@@ -509,12 +522,14 @@ class DBHandler : public OmniSciIf {
   std::mutex render_mutex_;
   int64_t start_time_;
   const AuthMetadata& authMetadata_;
-  const SystemParameters& mapd_parameters_;
+  const SystemParameters& system_parameters_;
   std::unique_ptr<RenderHandler> render_handler_;
   std::unique_ptr<MapDAggHandler> agg_handler_;
   std::unique_ptr<MapDLeafHandler> leaf_handler_;
   std::shared_ptr<Calcite> calcite_;
   const bool legacy_syntax_;
+
+  std::unique_ptr<QueryDispatchQueue> dispatch_queue_;
 
   template <typename... ARGS>
   std::shared_ptr<query_state::QueryState> create_query_state(ARGS&&... args) {
@@ -525,6 +540,11 @@ class DBHandler : public OmniSciIf {
   Catalog_Namespace::SessionInfo get_session_copy(const TSessionId& session);
   std::shared_ptr<Catalog_Namespace::SessionInfo> get_session_copy_ptr(
       const TSessionId& session);
+
+  void get_tables_meta_impl(std::vector<TTableMeta>& _return,
+                            QueryStateProxy query_state_proxy,
+                            const Catalog_Namespace::SessionInfo& session_info,
+                            const bool with_table_locks = true);
 
  private:
   std::shared_ptr<Catalog_Namespace::SessionInfo> create_new_session(
@@ -578,7 +598,7 @@ class DBHandler : public OmniSciIf {
       const std::string& query_str,
       const std::vector<TFilterPushDownInfo>& filter_push_down_info,
       const bool acquire_locks,
-      const SystemParameters mapd_parameters,
+      const SystemParameters system_parameters,
       bool check_privileges = true);
 
   void sql_execute_impl(TQueryResult& _return,
@@ -587,7 +607,8 @@ class DBHandler : public OmniSciIf {
                         const std::string& nonce,
                         const ExecutorDeviceType executor_device_type,
                         const int32_t first_n,
-                        const int32_t at_most_n);
+                        const int32_t at_most_n,
+                        const std::optional<size_t> executor_index = std::nullopt);
 
   bool user_can_access_table(const Catalog_Namespace::SessionInfo&,
                              const TableDescriptor* td,
@@ -596,8 +617,7 @@ class DBHandler : public OmniSciIf {
   void execute_distributed_copy_statement(
       Parser::CopyTableStmt*,
       const Catalog_Namespace::SessionInfo& session_info);
-
-  void validate_rel_alg(TTableDescriptor& _return, QueryStateProxy);
+  void validate_rel_alg(TRowDescriptor& _return, QueryStateProxy);
 
   std::vector<PushedDownFilterInfo> execute_rel_alg(
       TQueryResult& _return,
@@ -609,7 +629,8 @@ class DBHandler : public OmniSciIf {
       const int32_t at_most_n,
       const bool just_validate,
       const bool find_push_down_candidates,
-      const ExplainInfo& explain_info) const;
+      const ExplainInfo& explain_info,
+      const std::optional<size_t> executor_index = std::nullopt) const;
 
   void execute_rel_alg_with_filter_push_down(
       TQueryResult& _return,

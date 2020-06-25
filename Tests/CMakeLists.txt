@@ -17,6 +17,10 @@ add_executable(ForeignServerDdlTest ForeignServerDdlTest.cpp)
 add_executable(ShowCommandsDdlTest ShowCommandsDdlTest.cpp)
 add_executable(CatalogMigrationTest CatalogMigrationTest.cpp)
 add_executable(CreateAndDropTableDdlTest CreateAndDropTableDdlTest.cpp)
+add_executable(ForeignTableDmlTest ForeignTableDmlTest.cpp)
+add_executable(FileMgrTest FileMgrTest.cpp)
+add_executable(FilePathWhitelistTest FilePathWhitelistTest.cpp)
+add_executable(EncoderTest EncoderTest.cpp)
 
 if(ENABLE_CUDA)
   set(MAPD_DEFINITIONS -DHAVE_CUDA)
@@ -33,7 +37,7 @@ if(ENABLE_CUDA)
         -O3
         -D_FORCE_INLINES
         ${MAPD_DEFINITIONS}
-        -arch sm_30
+        ${CUDA_COMPILATION_ARCH}
         -std=c++14
         -shared
         ${CMAKE_CURRENT_SOURCE_DIR}/ProfileUtils.cu
@@ -60,6 +64,7 @@ add_executable(BumpAllocatorTest BumpAllocatorTest.cpp)
 add_executable(SpecialCharsTest SpecialCharsTest.cpp)
 add_executable(TableFunctionsTest TableFunctionsTest.cpp)
 add_executable(ArrayTest ArrayTest.cpp)
+add_executable(ParallelExecutorsTest ParallelExecutorsTest.cpp)
 add_executable(MigrationMgrTest MigrationMgrTest.cpp)
 add_executable(TopKTest TopKTest.cpp)
 add_executable(TokenCompletionHintsTest TokenCompletionHintsTest.cpp)
@@ -76,6 +81,7 @@ add_executable(UpdateMetadataTest UpdateMetadataTest.cpp)
 add_executable(CalciteOptimizeTest CalciteOptimizeTest.cpp)
 add_executable(JoinHashTableTest JoinHashTableTest.cpp)
 add_executable(CachedHashTableTest CachedHashTableTest.cpp)
+add_executable(RuntimeInterruptTest RuntimeInterruptTest.cpp)
 add_executable(ColumnarResultsTest ColumnarResultsTest.cpp ResultSetTestUtils.cpp)
 add_executable(CommandLineTest CommandLineTest.cpp)
 add_executable(NurgiTest NurgiTest.cpp)
@@ -83,11 +89,17 @@ add_executable(NurgiLegacyTest NurgiLegacyTest.cpp)
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   add_executable(UdfTest UdfTest.cpp)
 endif()
+if(ENABLE_CUDA)
+  add_executable(GpuSharedMemoryTest GpuSharedMemoryTest.cpp ResultSetTestUtils.cpp)
+endif()
+if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
+  add_executable(UserMappingDdlTest UserMappingDdlTest.cpp)
+endif()
 
 # Tests + Microbenchmarks
 add_executable(TableUpdateDeleteBenchmark TableUpdateDeleteBenchmark.cpp)
 
-set(EXECUTE_TEST_LIBS gtest mapd_thrift QueryRunner ${MAPD_LIBRARIES} ${CMAKE_DL_LIBS} ${CUDA_LIBRARIES} ${LLVM_LINKER_FLAGS} ${CURSES_LIBRARIES} ${Boost_LIBRARIES} ${PROFILER_LIBS})
+set(EXECUTE_TEST_LIBS gtest mapd_thrift QueryRunner ${MAPD_LIBRARIES} ${CMAKE_DL_LIBS} ${CUDA_LIBRARIES} ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${PROFILER_LIBS})
 set(THRIFT_HANDLER_TEST_LIBRARIES thrift_handler ${EXECUTE_TEST_LIBS})
 
 # Replace Licensing library with TestLicensing library
@@ -103,7 +115,7 @@ target_link_libraries(ColumnarResultsTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(FromTableReorderingTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(ResultSetBaselineRadixSortTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(UtilTest Utils gtest Shared ${Boost_LIBRARIES})
-target_link_libraries(StringDictionaryTest StringDictionary gtest Shared ${Boost_LIBRARIES})
+target_link_libraries(StringDictionaryTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(StringTransformTest Shared gtest ${Boost_LIBRARIES})
 target_link_libraries(StringFunctionsTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(TokenCompletionHintsTest token_completion_hints gtest mapd_thrift Shared ${Boost_LIBRARIES})
@@ -119,6 +131,7 @@ target_link_libraries(StorageTest gtest ${EXECUTE_TEST_LIBS})
 target_link_libraries(ComputeMetadataTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(TableFunctionsTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(ArrayTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(ParallelExecutorsTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(MigrationMgrTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(BumpAllocatorTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(SpecialCharsTest ${EXECUTE_TEST_LIBS})
@@ -140,6 +153,8 @@ target_link_libraries(DateTimeUtilsTest gtest Shared ${LLVM_LINKER_FLAGS})
 target_link_libraries(CalciteOptimizeTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(JoinHashTableTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(CachedHashTableTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(RuntimeInterruptTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(EncoderTest gtest DataMgr)
 target_link_libraries(CommandLineTest gtest Shared ${Boost_LIBRARIES})
 # Requires thrift_handler for DBHandler test fixture
 target_link_libraries(DBObjectPrivilegesTest ${THRIFT_HANDLER_TEST_LIBRARIES})
@@ -149,12 +164,22 @@ target_link_libraries(CreateAndDropTableDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES}
 target_link_libraries(ShowCommandsDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
 target_link_libraries(NurgiTest ${EXECUTE_TEST_LIBS})
 target_link_libraries(NurgiLegacyTest ${EXECUTE_TEST_LIBS})
+target_link_libraries(ForeignTableDmlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
+target_link_libraries(FileMgrTest ${THRIFT_HANDLER_TEST_LIBRARIES})
+target_link_libraries(FilePathWhitelistTest ${THRIFT_HANDLER_TEST_LIBRARIES})
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   target_link_libraries(UdfTest gtest ${EXECUTE_TEST_LIBS})
 endif()
 
 target_link_libraries(TableUpdateDeleteBenchmark benchmark ${EXECUTE_TEST_LIBS})
+if(ENABLE_CUDA)
+  target_link_libraries(GpuSharedMemoryTest ${EXECUTE_TEST_LIBS})
+endif()
+
+if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
+  target_link_libraries(UserMappingDdlTest ${THRIFT_HANDLER_TEST_LIBRARIES})
+endif()
 
 set(TEST_ARGS "--gtest_output=xml:../")
 add_test(DumpRestoreTest DumpRestoreTest ${TEST_ARGS})
@@ -174,6 +199,7 @@ add_test(CachedHashTableTest CachedHashTableTest ${TEST_ARGS})
 add_test(ResultSetBaselineRadixSortTest ResultSetBaselineRadixSortTest ${TEST_ARGS})
 add_test(RunQueryLoop RunQueryLoop ${TEST_ARGS})
 add_test(StringDictionaryTest StringDictionaryTest ${TEST_ARGS})
+add_test(NAME StringDictionaryRkHashTest COMMAND StringDictionaryTest ${TEST_ARGS} "--enable-string-dict-hash-cache")
 add_test(StringTransformTest StringTransformTest ${TEST_ARGS})
 add_test(StringFunctionsTest StringFunctionsTest ${TEST_ARGS})
 add_test(StorageTest StorageTest ${TEST_ARGS})
@@ -182,6 +208,7 @@ add_test(BumpAllocatorTest BumpAllocatorTest ${TEST_ARGS})
 add_test(SpecialCharsTest SpecialCharsTest ${TEST_ARGS})
 add_test(TableFunctionsTest TableFunctionsTest ${TEST_ARGS})
 add_test(ArrayTest ArrayTest ${TEST_ARGS})
+add_test(ParallelExecutorsTest ParallelExecutorsTest ${TEST_ARGS})
 add_test(MigrationMgrTest MigrationMgrTest ${TEST_ARGS})
 add_test(StoragePerfTest StoragePerfTest ${TEST_ARGS})
 add_test(TopKTest TopKTest ${TEST_ARGS})
@@ -196,6 +223,8 @@ add_test(CorrelatedSubqueryTest CorrelatedSubqueryTest ${TEST_ARGS})
 add_test(DateTimeUtilsTest DateTimeUtilsTest ${TEST_ARGS})
 add_test(UpdateMetadataTest UpdateMetadataTest ${TEST_ARGS})
 add_test(CalciteOptimizeTest CalciteOptimizeTest ${TEST_ARGS})
+add_test(JoinHashTableTest JoinHashTableTest ${TEST_ARGS})
+add_tesT(RuntimeInterruptTest RuntimeInterruptTest ${TEST_ARGS})
 add_test(CommandLineTest CommandLineTest ${TEST_ARGS})
 add_test(ForeignServerDdlTest ForeignServerDdlTest ${TEST_ARGS})
 add_test(ShowCommandsDdlTest ShowCommandsDdlTest ${TEST_ARGS})
@@ -203,9 +232,20 @@ add_test(CatalogMigrationTest CatalogMigrationTest ${TEST_ARGS})
 add_test(CreateAndDropTableDdlTest CreateAndDropTableDdlTest ${TEST_ARGS})
 add_test(NurgiTest NurgiTest ${TEST_ARGS})
 add_test(NurgiLegacyTest NurgiLegacyTest ${TEST_ARGS})
+add_test(ForeignTableDmlTest ForeignTableDmlTest ${TEST_ARGS})
+add_test(FileMgrTest FileMgrTest ${TEST_ARGS})
+add_test(FilePathWhitelistTest FilePathWhitelistTest ${TEST_ARGS})
+add_test(EncoderTest EncoderTest ${TEST_ARGS})
+if(ENABLE_CUDA)
+  add_test(GpuSharedMemoryTest GpuSharedMemoryTest ${TEST_ARGS})
+endif()
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   add_test(UdfTest UdfTest ${TEST_ARGS})
+endif()
+
+if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
+  add_test(UserMappingDdlTest UserMappingDdlTest ${TEST_ARGS})
 endif()
 
 add_executable(ArrowIpcIntegrationTest ArrowIpcIntegrationTest.cpp)
@@ -242,6 +282,7 @@ set(TEST_PROGRAMS
   SpecialCharsTest
   TableFunctionsTest
   ArrayTest
+  ParallelExecutorsTest
   MigrationMgrTest
   TopKTest
   TokenCompletionHintsTest
@@ -257,7 +298,9 @@ set(TEST_PROGRAMS
   CalciteOptimizeTest
   JoinHashTableTest
   CachedHashTableTest
+  RuntimeInterruptTest
   StringFunctionsTest
+  StringDictionaryTest
   CommandLineTest
   ForeignServerDdlTest
   ShowCommandsDdlTest
@@ -265,14 +308,27 @@ set(TEST_PROGRAMS
   CreateAndDropTableDdlTest
   NurgiTest
   NurgiLegacyTest
+  ForeignTableDmlTest
+  FileMgrTest
+  FilePathWhitelistTest
+  EncoderTest
 )
+
+if(ENABLE_CUDA)
+  list(APPEND TEST_PROGRAMS GpuSharedMemoryTest)
+endif()
 
 if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
   list(APPEND TEST_PROGRAMS UdfTest)
 endif()
 
+if("${MAPD_EDITION_LOWER}" STREQUAL "ee")
+  list(APPEND TEST_PROGRAMS UserMappingDdlTest)
+endif()
+
 set(SANITY_TESTS ${TEST_PROGRAMS})
 list(APPEND SANITY_TESTS ExecuteTestTemporaryTables)
+list(APPEND SANITY_TESTS StringDictionaryRkHashTest)
 
 set_tests_properties(${SANITY_TESTS} PROPERTIES LABELS "sanity")
 

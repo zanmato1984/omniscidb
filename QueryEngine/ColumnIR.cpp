@@ -159,7 +159,7 @@ std::vector<llvm::Value*> CodeGenerator::codegenColVar(const Analyzer::ColumnVar
   }
   const int local_col_id = plan_state_->getLocalColumnId(col_var, fetch_column);
   const auto window_func_context =
-      WindowProjectNodeContext::getActiveWindowFunctionContext();
+      WindowProjectNodeContext::getActiveWindowFunctionContext(executor());
   // only generate the decoding code once; if a column has been previously
   // fetched in the generated IR, we'll reuse it
   if (!window_func_context) {
@@ -547,7 +547,7 @@ const Analyzer::Expr* remove_cast_to_int(const Analyzer::Expr* expr) {
 
 std::shared_ptr<const Analyzer::Expr> CodeGenerator::hashJoinLhs(
     const Analyzer::ColumnVar* rhs) const {
-  for (const auto tautological_eq : plan_state_->join_info_.equi_join_tautologies_) {
+  for (const auto& tautological_eq : plan_state_->join_info_.equi_join_tautologies_) {
     CHECK(IS_EQUIVALENCE(tautological_eq->get_optype()));
     if (dynamic_cast<const Analyzer::ExpressionTuple*>(
             tautological_eq->get_left_operand())) {

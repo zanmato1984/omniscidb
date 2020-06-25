@@ -57,6 +57,7 @@
 #include "QueryEngine/GpuMemUtils.h"
 #include "QueryEngine/JoinFilterPushDown.h"
 #include "QueryEngine/JsonAccessors.h"
+#include "QueryEngine/QueryDispatchQueue.h"
 #include "QueryEngine/TableFunctions/TableFunctionsFactory.h"
 #include "QueryEngine/TableOptimizer.h"
 #include "QueryEngine/ThriftSerializers.h"
@@ -167,6 +168,10 @@ SessionMap::iterator DBHandler::get_session_it_unsafe(
   return session_it;
 }
 
+#ifdef ENABLE_GEOS
+extern std::unique_ptr<std::string> g_libgeos_so_filename;
+#endif
+
 DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
                      const std::vector<LeafHostInfo>& string_leaves,
                      const std::string& base_data_path,
@@ -184,16 +189,22 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
                      const int num_gpus,
                      const int start_gpu,
                      const size_t reserved_gpu_mem,
+                     const bool render_compositor_use_last_gpu,
                      const size_t num_reader_threads,
                      const AuthMetadata& authMetadata,
-                     const SystemParameters& mapd_parameters,
+                     const SystemParameters& system_parameters,
                      const bool legacy_syntax,
                      const int idle_session_duration,
                      const int max_session_duration,
                      const bool enable_runtime_udf_registration,
                      const std::string& udf_filename,
                      const std::string& clang_path,
-                     const std::vector<std::string>& clang_options)
+                     const std::vector<std::string>& clang_options
+#ifdef ENABLE_GEOS
+                     ,
+                     const std::string& libgeos_so_filename
+#endif
+                     )
     : leaf_aggregator_(db_leaves)
     , string_leaves_(string_leaves)
     , base_data_path_(base_data_path)
@@ -205,8 +216,10 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
     , read_only_(read_only)
     , allow_loop_joins_(allow_loop_joins)
     , authMetadata_(authMetadata)
-    , mapd_parameters_(mapd_parameters)
+    , system_parameters_(system_parameters)
     , legacy_syntax_(legacy_syntax)
+    , dispatch_queue_(
+          std::make_unique<QueryDispatchQueue>(system_parameters.num_executors))
     , super_user_rights_(false)
     , idle_session_duration_(idle_session_duration * 60)
     , max_session_duration_(max_session_duration * 60)
@@ -246,7 +259,7 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
 
   try {
     data_mgr_.reset(new Data_Namespace::DataMgr(data_path.string(),
-                                                mapd_parameters,
+                                                system_parameters,
                                                 !cpu_mode_only_,
                                                 num_gpus,
                                                 start_gpu,
@@ -260,7 +273,11 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
 
   try {
     if (!udf_filename.empty()) {
-      UdfCompiler compiler(udf_filename, clang_path, clang_options);
+      const auto cuda_mgr = data_mgr_->getCudaMgr();
+      const CudaMgr_Namespace::NvidiaDeviceArch device_arch =
+          cuda_mgr ? cuda_mgr->getDeviceArch()
+                   : CudaMgr_Namespace::NvidiaDeviceArch::Kepler;
+      UdfCompiler compiler(udf_filename, device_arch, clang_path, clang_options);
       int compile_result = compiler.compileUdf();
 
       if (compile_result == 0) {
@@ -273,7 +290,7 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
 
   try {
     calcite_ =
-        std::make_shared<Calcite>(mapd_parameters, base_data_path_, udf_ast_filename);
+        std::make_shared<Calcite>(system_parameters, base_data_path_, udf_ast_filename);
   } catch (const std::exception& e) {
     LOG(FATAL) << "Failed to initialize Calcite server: " << e.what();
   }
@@ -328,10 +345,10 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
       render_handler_.reset(new RenderHandler(this,
                                               render_mem_bytes,
                                               max_concurrent_render_sessions,
-                                              0u,
+                                              render_compositor_use_last_gpu,
                                               false,
                                               0,
-                                              mapd_parameters_));
+                                              system_parameters_));
     } catch (const std::exception& e) {
       LOG(ERROR) << "Backend rendering disabled: " << e.what();
     }
@@ -350,10 +367,37 @@ DBHandler::DBHandler(const std::vector<LeafHostInfo>& db_leaves,
       LOG(ERROR) << "Distributed leaf support disabled: " << e.what();
     }
   }
+
+#ifdef ENABLE_GEOS
+  if (!libgeos_so_filename.empty()) {
+    g_libgeos_so_filename.reset(new std::string(libgeos_so_filename));
+    LOG(INFO) << "Overriding default geos library with '" + *g_libgeos_so_filename + "'";
+  }
+#endif
 }
 
 DBHandler::~DBHandler() {}
 
+void DBHandler::parser_with_error_handler(
+    const std::string& query_str,
+    std::list<std::unique_ptr<Parser::Stmt>>& parse_trees) {
+  int num_parse_errors = 0;
+  std::string last_parsed;
+  try {
+    SQLParser parser;
+    num_parse_errors = parser.parse(query_str, parse_trees, last_parsed);
+  } catch (std::exception& e) {
+    THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
+  }
+  if (num_parse_errors > 0) {
+    THROW_MAPD_EXCEPTION("Syntax error at: " + last_parsed);
+  }
+  if (parse_trees.size() > 1) {
+    THROW_MAPD_EXCEPTION("multiple SQL statements not allowed");
+  } else if (parse_trees.size() != 1) {
+    THROW_MAPD_EXCEPTION("empty SQL statment not allowed");
+  }
+}
 void DBHandler::check_read_only(const std::string& str) {
   if (DBHandler::read_only_) {
     THROW_MAPD_EXCEPTION(str + " disabled: server running in read-only mode.");
@@ -558,6 +602,10 @@ void DBHandler::switch_database(const TSessionId& session, const std::string& db
     std::shared_ptr<Catalog> cat = SysCatalog::instance().switchDatabase(
         dbname2, session_it->second->get_currentUser().userName);
     session_it->second->set_catalog_ptr(cat);
+    if (leaf_aggregator_.leafCount() > 0) {
+      leaf_aggregator_.switch_database(session, dbname);
+      return;
+    }
   } catch (std::exception& e) {
     THROW_MAPD_EXCEPTION(e.what());
   }
@@ -598,10 +646,10 @@ void DBHandler::interrupt(const TSessionId& query_session,
     auto session_it = get_session_it_unsafe(interrupt_session, read_lock);
     auto& cat = session_it->second.get()->getCatalog();
     const auto dbname = cat.getCurrentDB().dbName;
-    auto executor = Executor::getExecutor(cat.getCurrentDB().dbId,
+    auto executor = Executor::getExecutor(Executor::UNITARY_EXECUTOR_ID,
                                           jit_debug_ ? "/tmp" : "",
                                           jit_debug_ ? "mapdquery" : "",
-                                          mapd_parameters_);
+                                          system_parameters_);
     CHECK(executor);
 
     VLOG(1) << "Received interrupt: "
@@ -934,7 +982,7 @@ void DBHandler::sql_execute(TQueryResult& _return,
                             const int32_t at_most_n) {
   auto session_ptr = get_session_ptr(session);
   auto query_state = create_query_state(session_ptr, query_str);
-  auto stdlog = STDLOG(query_state);
+  auto stdlog = STDLOG(session_ptr, query_state);
   stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
   auto timer = DEBUG_TIMER(__func__);
 
@@ -959,7 +1007,7 @@ void DBHandler::sql_execute(TQueryResult& _return,
                                       nonce,
                                       first_n,
                                       at_most_n,
-                                      mapd_parameters_);
+                                      system_parameters_);
       } catch (std::exception& e) {
         const auto mapd_exception = dynamic_cast<const TOmniSciException*>(&e);
         const auto thrift_exception = dynamic_cast<const apache::thrift::TException*>(&e);
@@ -972,13 +1020,30 @@ void DBHandler::sql_execute(TQueryResult& _return,
     });
   } else {
     _return.total_time_ms = measure<>::execution([&]() {
-      DBHandler::sql_execute_impl(_return,
-                                  query_state->createQueryStateProxy(),
-                                  column_format,
-                                  nonce,
-                                  session_ptr->get_executor_device_type(),
-                                  first_n,
-                                  at_most_n);
+      auto query_state_proxy = query_state->createQueryStateProxy();
+      const auto executor_device_type = session_ptr->get_executor_device_type();
+      auto query_launch_task = std::make_shared<QueryDispatchQueue::Task>(
+          [this,
+           &_return,
+           query_state_proxy,
+           column_format,
+           &nonce,
+           executor_device_type,
+           first_n,
+           at_most_n](const size_t executor_index) {
+            sql_execute_impl(_return,
+                             query_state_proxy,
+                             column_format,
+                             nonce,
+                             executor_device_type,
+                             first_n,
+                             at_most_n,
+                             executor_index);
+          });
+      CHECK(dispatch_queue_);
+      dispatch_queue_->submit(query_launch_task);
+      auto result_future = query_launch_task->get_future();
+      result_future.get();
     });
   }
 
@@ -1017,6 +1082,8 @@ void DBHandler::sql_execute(TQueryResult& _return,
                               _return.execution_time_ms,
                               "total_time_ms",  // BE-3420 - Redundant with duration field
                               stdlog.duration<std::chrono::milliseconds>());
+  VLOG(1) << "Table Schema Locks:\n" << lockmgr::TableSchemaLockMgr::instance();
+  VLOG(1) << "Table Data Locks:\n" << lockmgr::TableDataLockMgr::instance();
 }
 
 void DBHandler::sql_execute_df(TDataFrame& _return,
@@ -1049,9 +1116,6 @@ void DBHandler::sql_execute_df(TDataFrame& _return,
       *legacylockmgr::LockMgr<mapd_shared_mutex, bool>::getMutex(
           legacylockmgr::ExecutorOuterLock, true));
 
-  SQLParser parser;
-  std::list<std::unique_ptr<Parser::Stmt>> parse_trees;
-  std::string last_parsed;
   try {
     ParserWrapper pw{query_str};
     if (!pw.is_ddl && !pw.is_update_dml &&
@@ -1060,8 +1124,11 @@ void DBHandler::sql_execute_df(TDataFrame& _return,
       lockmgr::LockedTableDescriptors locks;
       _return.execution_time_ms += measure<>::execution([&]() {
         TPlanResult result;
-        std::tie(result, locks) = parse_to_ra(
-            query_state->createQueryStateProxy(), query_str, {}, true, mapd_parameters_);
+        std::tie(result, locks) = parse_to_ra(query_state->createQueryStateProxy(),
+                                              query_str,
+                                              {},
+                                              true,
+                                              system_parameters_);
         query_ra = result.plan_result;
       });
 
@@ -1139,7 +1206,7 @@ std::string DBHandler::apply_copy_to_shim(const std::string& query_str) {
   return result;
 }
 
-void DBHandler::sql_validate(TTableDescriptor& _return,
+void DBHandler::sql_validate(TRowDescriptor& _return,
                              const TSessionId& session,
                              const std::string& query_str) {
   auto stdlog = STDLOG(get_session_ptr(session));
@@ -1345,7 +1412,7 @@ std::unordered_set<std::string> DBHandler::get_uc_compatible_table_names_by_colu
   return compatible_table_names_by_column;
 }
 
-void DBHandler::validate_rel_alg(TTableDescriptor& _return,
+void DBHandler::validate_rel_alg(TRowDescriptor& _return,
                                  QueryStateProxy query_state_proxy) {
   try {
     const auto execute_read_lock = mapd_shared_lock<mapd_shared_mutex>(
@@ -1361,7 +1428,7 @@ void DBHandler::validate_rel_alg(TTableDescriptor& _return,
                     query_state_proxy.getQueryState().getQueryStr(),
                     {},
                     true,
-                    mapd_parameters_);
+                    system_parameters_);
     const auto query_ra = parse_result.plan_result;
 
     TQueryResult result;
@@ -1375,13 +1442,10 @@ void DBHandler::validate_rel_alg(TTableDescriptor& _return,
                                /*just_validate=*/true,
                                /*find_filter_push_down_candidates=*/false,
                                ExplainInfo::defaults());
-    const auto& row_desc = fixup_row_descriptor(
+
+    _return = fixup_row_descriptor(
         result.row_set.row_desc,
         query_state_proxy.getQueryState().getConstSessionInfo()->getCatalog());
-    for (const auto& col_desc : row_desc) {
-      const auto it_ok = _return.insert(std::make_pair(col_desc.col_name, col_desc));
-      CHECK(it_ok.second);
-    }
   } catch (std::exception& e) {
     THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
   }
@@ -1902,7 +1966,7 @@ void DBHandler::get_table_details_impl(TTableDetails& _return,
                                             query_state->getQueryStr(),
                                             {},
                                             false,
-                                            mapd_parameters_,
+                                            system_parameters_,
                                             false);
           try {
             calcite_->checkAccessedObjectsPrivileges(query_state->createQueryStateProxy(),
@@ -2039,15 +2103,11 @@ void DBHandler::get_views(std::vector<std::string>& table_names,
   get_tables_impl(table_names, *stdlog.getConstSessionInfo(), GET_VIEWS);
 }
 
-void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
-                                const TSessionId& session) {
-  auto stdlog = STDLOG(get_session_ptr(session));
-  stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
-  auto session_ptr = stdlog.getConstSessionInfo();
-  auto query_state = create_query_state(session_ptr, "");
-  stdlog.setQueryState(query_state);
-
-  const auto& cat = session_ptr->getCatalog();
+void DBHandler::get_tables_meta_impl(std::vector<TTableMeta>& _return,
+                                     QueryStateProxy query_state_proxy,
+                                     const Catalog_Namespace::SessionInfo& session_info,
+                                     const bool with_table_locks) {
+  const auto& cat = session_info.getCatalog();
   const auto tables = cat.getAllTableMetadata();
   _return.reserve(tables.size());
 
@@ -2056,7 +2116,7 @@ void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
       // skip shards, they're not standalone tables
       continue;
     }
-    if (!hasTableAccessPrivileges(td, *session_ptr)) {
+    if (!hasTableAccessPrivileges(td, session_info)) {
       // skip table, as there are no privileges to access it
       continue;
     }
@@ -2074,15 +2134,15 @@ void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
     size_t num_cols = 0;
     if (td->isView) {
       try {
-        const auto query_ra = parse_to_ra(query_state->createQueryStateProxy(),
-                                          td->viewSQL,
-                                          {},
-                                          false,
-                                          mapd_parameters_)
-                                  .first.plan_result;
+        TPlanResult parse_result;
+        lockmgr::LockedTableDescriptors locks;
+        std::tie(parse_result, locks) = parse_to_ra(
+            query_state_proxy, td->viewSQL, {}, with_table_locks, system_parameters_);
+        const auto query_ra = parse_result.plan_result;
+
         TQueryResult result;
         execute_rel_alg(result,
-                        query_state->createQueryStateProxy(),
+                        query_state_proxy,
                         query_ra,
                         true,
                         ExecutorDeviceType::CPU,
@@ -2092,7 +2152,7 @@ void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
                         /*find_push_down_candidates=*/false,
                         ExplainInfo::defaults());
         num_cols = result.row_set.row_desc.size();
-        for (const auto col : result.row_set.row_desc) {
+        for (const auto& col : result.row_set.row_desc) {
           if (col.is_physical) {
             num_cols--;
             continue;
@@ -2105,7 +2165,7 @@ void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
       }
     } else {
       try {
-        if (hasTableAccessPrivileges(td, *session_ptr)) {
+        if (hasTableAccessPrivileges(td, session_info)) {
           const auto col_descriptors =
               cat.getAllColumnMetadataForTable(td->tableId, false, true, false);
           const auto deleted_cd = cat.getDeletedColumn(td);
@@ -2130,6 +2190,25 @@ void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
     std::copy(col_names.begin(), col_names.end(), std::back_inserter(ret.col_names));
 
     _return.push_back(ret);
+  }
+}
+
+void DBHandler::get_tables_meta(std::vector<TTableMeta>& _return,
+                                const TSessionId& session) {
+  auto stdlog = STDLOG(get_session_ptr(session));
+  stdlog.appendNameValuePairs("client", getConnectionInfo().toString());
+  auto session_ptr = stdlog.getConstSessionInfo();
+  auto query_state = create_query_state(session_ptr, "");
+  stdlog.setQueryState(query_state);
+
+  auto execute_read_lock = mapd_shared_lock<mapd_shared_mutex>(
+      *legacylockmgr::LockMgr<mapd_shared_mutex, bool>::getMutex(
+          legacylockmgr::ExecutorOuterLock, true));
+
+  try {
+    get_tables_meta_impl(_return, query_state->createQueryStateProxy(), *session_ptr);
+  } catch (const std::exception& e) {
+    THROW_MAPD_EXCEPTION(e.what());
   }
 }
 
@@ -4492,9 +4571,20 @@ void DBHandler::check_session_exp_unsafe(const SessionMap::iterator& session_it)
   }
   time_t last_used_time = session_it->second->get_last_used_time();
   time_t start_time = session_it->second->get_start_time();
-  if ((time(0) - last_used_time) > idle_session_duration_) {
+  const auto current_session_duration = time(0) - last_used_time;
+  if (current_session_duration > idle_session_duration_) {
+    LOG(INFO) << "Session " << session_it->second->get_public_session_id()
+              << " idle duration " << current_session_duration
+              << " seconds exceeds maximum idle duration " << idle_session_duration_
+              << " seconds. Invalidating session.";
     throw ForceDisconnect("Idle Session Timeout. User should re-authenticate.");
-  } else if ((time(0) - start_time) > max_session_duration_) {
+  }
+  const auto total_session_duration = time(0) - start_time;
+  if (total_session_duration > max_session_duration_) {
+    LOG(INFO) << "Session " << session_it->second->get_public_session_id()
+              << " total duration " << total_session_duration
+              << " seconds exceeds maximum total session duration "
+              << max_session_duration_ << " seconds. Invalidating session.";
     throw ForceDisconnect("Maximum active Session Timeout. User should re-authenticate.");
   }
 }
@@ -4511,12 +4601,12 @@ Catalog_Namespace::SessionInfo DBHandler::get_session_copy(const TSessionId& ses
 
 std::shared_ptr<Catalog_Namespace::SessionInfo> DBHandler::get_session_copy_ptr(
     const TSessionId& session) {
-  // Note(Wamsi): We have `get_const_session_ptr` which would return as const SessionInfo
-  // stored in the map. You can use `get_const_session_ptr` instead of the copy of
-  // SessionInfo but beware that it can be changed in teh map. So if you do not care about
-  // the changes then use `get_const_session_ptr` if you do then use this function to get
-  // a copy. We should eventually aim to merge both `get_const_session_ptr` and
-  // `get_session_copy_ptr`.
+  // Note(Wamsi): We have `get_const_session_ptr` which would return as const
+  // SessionInfo stored in the map. You can use `get_const_session_ptr` instead of the
+  // copy of SessionInfo but beware that it can be changed in teh map. So if you do not
+  // care about the changes then use `get_const_session_ptr` if you do then use this
+  // function to get a copy. We should eventually aim to merge both
+  // `get_const_session_ptr` and `get_session_copy_ptr`.
   mapd_shared_lock<mapd_shared_mutex> read_lock(sessions_mutex_);
   auto& session_info_ref = *get_session_it_unsafe(session, read_lock)->second;
   return std::make_shared<Catalog_Namespace::SessionInfo>(session_info_ref);
@@ -4528,10 +4618,10 @@ std::shared_ptr<Catalog_Namespace::SessionInfo> DBHandler::get_session_ptr(
   // Should be used only when you need to make updates to original SessionInfo object.
   // Currently used by `update_session_last_used_duration`
 
-  // 1) `session_id` will be empty during intial connect. 2)`sessionmapd iterator` will be
-  // invalid during disconnect. SessionInfo will be erased from map by the time it reaches
-  // here. In both the above cases, we would return `nullptr` and can skip SessionInfo
-  // updates.
+  // 1) `session_id` will be empty during intial connect. 2)`sessionmapd iterator` will
+  // be invalid during disconnect. SessionInfo will be erased from map by the time it
+  // reaches here. In both the above cases, we would return `nullptr` and can skip
+  // SessionInfo updates.
   if (session_id.empty()) {
     return {};
   }
@@ -4592,8 +4682,13 @@ std::vector<PushedDownFilterInfo> DBHandler::execute_rel_alg(
     const int32_t at_most_n,
     const bool just_validate,
     const bool find_push_down_candidates,
-    const ExplainInfo& explain_info) const {
+    const ExplainInfo& explain_info,
+    const std::optional<size_t> executor_index) const {
   query_state::Timer timer = query_state_proxy.createTimer(__func__);
+
+  VLOG(1) << "Table Schema Locks:\n" << lockmgr::TableSchemaLockMgr::instance();
+  VLOG(1) << "Table Data Locks:\n" << lockmgr::TableDataLockMgr::instance();
+
   const auto& cat = query_state_proxy.getQueryState().getConstSessionInfo()->getCatalog();
   CompilationOptions co = {executor_device_type,
                            /*hoist_literals=*/true,
@@ -4615,13 +4710,14 @@ std::vector<PushedDownFilterInfo> DBHandler::execute_rel_alg(
                          g_dynamic_watchdog_time_limit,
                          find_push_down_candidates,
                          explain_info.justCalciteExplain(),
-                         mapd_parameters_.gpu_input_mem_limit,
+                         system_parameters_.gpu_input_mem_limit,
                          g_enable_runtime_query_interrupt,
                          g_runtime_query_interrupt_frequency};
-  auto executor = Executor::getExecutor(cat.getCurrentDB().dbId,
-                                        jit_debug_ ? "/tmp" : "",
-                                        jit_debug_ ? "mapdquery" : "",
-                                        mapd_parameters_);
+  auto executor = Executor::getExecutor(
+      executor_index ? *executor_index : Executor::UNITARY_EXECUTOR_ID,
+      jit_debug_ ? "/tmp" : "",
+      jit_debug_ ? "mapdquery" : "",
+      system_parameters_);
   RelAlgExecutor ra_executor(executor.get(),
                              cat,
                              query_ra,
@@ -4637,6 +4733,7 @@ std::vector<PushedDownFilterInfo> DBHandler::execute_rel_alg(
   });
   // reduce execution time by the time spent during queue waiting
   _return.execution_time_ms -= result.getRows()->getQueueTime();
+  VLOG(1) << cat.getDataMgr().getSystemMemoryUsage();
   const auto& filter_push_down_info = result.getPushedDownFilterInfo();
   if (!filter_push_down_info.empty()) {
     return filter_push_down_info;
@@ -4684,13 +4781,13 @@ void DBHandler::execute_rel_alg_df(TDataFrame& _return,
                          g_dynamic_watchdog_time_limit,
                          false,
                          false,
-                         mapd_parameters_.gpu_input_mem_limit,
+                         system_parameters_.gpu_input_mem_limit,
                          g_enable_runtime_query_interrupt,
                          g_runtime_query_interrupt_frequency};
-  auto executor = Executor::getExecutor(cat.getCurrentDB().dbId,
+  auto executor = Executor::getExecutor(Executor::UNITARY_EXECUTOR_ID,
                                         jit_debug_ ? "/tmp" : "",
                                         jit_debug_ ? "mapdquery" : "",
-                                        mapd_parameters_);
+                                        system_parameters_);
   RelAlgExecutor ra_executor(executor.get(),
                              cat,
                              query_ra,
@@ -4732,7 +4829,7 @@ void DBHandler::execute_rel_alg_df(TDataFrame& _return,
 std::vector<TargetMetaInfo> DBHandler::getTargetMetaInfo(
     const std::vector<std::shared_ptr<Analyzer::TargetEntry>>& targets) const {
   std::vector<TargetMetaInfo> result;
-  for (const auto target : targets) {
+  for (const auto& target : targets) {
     CHECK(target);
     CHECK(target->get_expr());
     result.emplace_back(target->get_resname(), target->get_expr()->get_type_info());
@@ -4743,7 +4840,7 @@ std::vector<TargetMetaInfo> DBHandler::getTargetMetaInfo(
 std::vector<std::string> DBHandler::getTargetNames(
     const std::vector<std::shared_ptr<Analyzer::TargetEntry>>& targets) const {
   std::vector<std::string> names;
-  for (const auto target : targets) {
+  for (const auto& target : targets) {
     CHECK(target);
     CHECK(target->get_expr());
     names.push_back(target->get_resname());
@@ -4754,7 +4851,7 @@ std::vector<std::string> DBHandler::getTargetNames(
 std::vector<std::string> DBHandler::getTargetNames(
     const std::vector<TargetMetaInfo>& targets) const {
   std::vector<std::string> names;
-  for (const auto target : targets) {
+  for (const auto& target : targets) {
     names.push_back(target.get_resname());
   }
   return names;
@@ -4793,7 +4890,7 @@ TRowDescriptor DBHandler::convert_target_metainfo(
     const std::vector<TargetMetaInfo>& targets) const {
   TRowDescriptor row_desc;
   size_t i = 0;
-  for (const auto target : targets) {
+  for (const auto& target : targets) {
     row_desc.push_back(convert_target_metainfo(target, i));
     ++i;
   }
@@ -4867,6 +4964,7 @@ TRowDescriptor DBHandler::fixup_row_descriptor(const TRowDescriptor& row_desc,
     }
     fixedup_row_desc.push_back(fixedup_col_desc);
   }
+
   return fixedup_row_desc;
 }
 
@@ -4958,13 +5056,26 @@ void DBHandler::check_and_invalidate_sessions(Parser::DDLStmt* ddl) {
   }
 }
 
+namespace {
+
+void throw_multiple_sql_statements_exception() {
+  THROW_MAPD_EXCEPTION("multiple SQL statements not allowed");
+}
+
+void throw_empty_sql_statement_exception() {
+  THROW_MAPD_EXCEPTION("empty SQL statment not allowed");
+}
+
+}  // namespace
+
 void DBHandler::sql_execute_impl(TQueryResult& _return,
                                  QueryStateProxy query_state_proxy,
                                  const bool column_format,
                                  const std::string& nonce,
                                  const ExecutorDeviceType executor_device_type,
                                  const int32_t first_n,
-                                 const int32_t at_most_n) {
+                                 const int32_t at_most_n,
+                                 const std::optional<size_t> executor_index) {
   if (leaf_handler_) {
     leaf_handler_->flush_queue();
   }
@@ -4976,10 +5087,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
   // Call to DistributedValidate() below may change cat.
   auto& cat = session_ptr->getCatalog();
 
-  SQLParser parser;
   std::list<std::unique_ptr<Parser::Stmt>> parse_trees;
-  std::string last_parsed;
-  int num_parse_errors = 0;
 
   mapd_unique_lock<mapd_shared_mutex> executeWriteLock;
   mapd_shared_lock<mapd_shared_mutex> executeReadLock;
@@ -4987,6 +5095,33 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
   lockmgr::LockedTableDescriptors locks;
   try {
     ParserWrapper pw{query_str};
+    switch (pw.getQueryType()) {
+      case ParserWrapper::QueryType::Read: {
+        _return.query_type = TQueryType::READ;
+        VLOG(1) << "query type: READ";
+        break;
+      }
+      case ParserWrapper::QueryType::Write: {
+        _return.query_type = TQueryType::WRITE;
+        VLOG(1) << "query type: WRITE";
+        break;
+      }
+      case ParserWrapper::QueryType::SchemaRead: {
+        _return.query_type = TQueryType::SCHEMA_READ;
+        VLOG(1) << "query type: SCHEMA READ";
+        break;
+      }
+      case ParserWrapper::QueryType::SchemaWrite: {
+        _return.query_type = TQueryType::SCHEMA_WRITE;
+        VLOG(1) << "query type: SCHEMA WRITE";
+        break;
+      }
+      default: {
+        _return.query_type = TQueryType::UNKNOWN;
+        LOG(WARNING) << "query type: UNKNOWN";
+        break;
+      }
+    }
     if (pw.isCalcitePathPermissable(read_only_)) {
       executeReadLock = mapd_shared_lock<mapd_shared_mutex>(
           *legacylockmgr::LockMgr<mapd_shared_mutex, bool>::getMutex(
@@ -4996,7 +5131,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
       _return.execution_time_ms += measure<>::execution([&]() {
         TPlanResult result;
         std::tie(result, locks) =
-            parse_to_ra(query_state_proxy, query_str, {}, true, mapd_parameters_);
+            parse_to_ra(query_state_proxy, query_str, {}, true, system_parameters_);
         query_ra = result.plan_result;
       });
 
@@ -5009,8 +5144,10 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
         // removing the "explain calcite " from the beginning of the "query_str":
         std::string temp_query_str =
             query_str.substr(std::string("explain calcite ").length());
+
+        CHECK(!locks.empty());
         query_ra_calcite_explain =
-            parse_to_ra(query_state_proxy, temp_query_str, {}, false, mapd_parameters_)
+            parse_to_ra(query_state_proxy, temp_query_str, {}, false, system_parameters_)
                 .first.plan_result;
       } else if (pw.isCalciteDdl()) {
         executeDdl(_return, query_ra, session_ptr);
@@ -5027,7 +5164,8 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
           at_most_n,
           /*just_validate=*/false,
           g_enable_filter_push_down && !g_cluster,
-          explain_info);
+          explain_info,
+          executor_index);
       if (explain_info.justCalciteExplain() && filter_push_down_requests.empty()) {
         // we only reach here if filter push down was enabled, but no filter
         // push down candidate was found
@@ -5035,6 +5173,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
         return;
       }
       if (!filter_push_down_requests.empty()) {
+        CHECK(!locks.empty());
         execute_rel_alg_with_filter_push_down(_return,
                                               query_state_proxy,
                                               query_ra,
@@ -5047,41 +5186,20 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
                                               filter_push_down_requests);
       } else if (explain_info.justCalciteExplain() && filter_push_down_requests.empty()) {
         // return the ra as the result:
-        // If we reach here, the 'filter_push_down_request' turned out to be empty, i.e.,
-        // no filter push down so we continue with the initial (unchanged) query's calcite
-        // explanation.
-        query_ra = parse_to_ra(query_state_proxy, query_str, {}, false, mapd_parameters_)
-                       .first.plan_result;
-        convert_explain(_return, ResultSet(query_ra), true);
-        return;
-      }
-      if (explain_info.justCalciteExplain()) {
-        // If we reach here, the filter push down candidates has been selected and
-        // proper output result has been already created.
-        return;
-      }
-      if (explain_info.justCalciteExplain()) {
-        // return the ra as the result:
-        // If we reach here, the 'filter_push_down_request' turned out to be empty, i.e.,
-        // no filter push down so we continue with the initial (unchanged) query's calcite
-        // explanation.
-        query_ra = parse_to_ra(query_state_proxy, query_str, {}, false, mapd_parameters_)
-                       .first.plan_result;
+        // If we reach here, the 'filter_push_down_request' turned out to be empty,
+        // i.e., no filter push down so we continue with the initial (unchanged) query's
+        // calcite explanation.
+        CHECK(!locks.empty());
+        query_ra =
+            parse_to_ra(query_state_proxy, query_str, {}, false, system_parameters_)
+                .first.plan_result;
         convert_explain(_return, ResultSet(query_ra), true);
         return;
       }
       return;
     } else if (pw.is_optimize || pw.is_validate) {
       // Get the Stmt object
-      try {
-        num_parse_errors = parser.parse(query_str, parse_trees, last_parsed);
-      } catch (std::exception& e) {
-        throw std::runtime_error(e.what());
-      }
-      if (num_parse_errors > 0) {
-        throw std::runtime_error("Syntax error at: " + last_parsed);
-      }
-      CHECK_EQ(parse_trees.size(), 1u);
+      DBHandler::parser_with_error_handler(query_str, parse_trees);
 
       if (pw.is_optimize) {
         const auto optimize_stmt =
@@ -5099,13 +5217,16 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
             throw std::runtime_error("Table " + optimize_stmt->getTableName() +
                                      " does not exist.");
           }
+          if (td->isView) {
+            throw std::runtime_error("OPTIMIZE TABLE command is not supported on views.");
+          }
 
           // acquire write lock on table data
           auto data_lock =
               lockmgr::TableDataLockMgr::getWriteLockForTable(cat, td->tableName);
 
-          auto executor =
-              Executor::getExecutor(cat.getCurrentDB().dbId, "", "", mapd_parameters_);
+          auto executor = Executor::getExecutor(
+              Executor::UNITARY_EXECUTOR_ID, "", "", system_parameters_);
           const TableOptimizer optimizer(td, executor.get(), cat);
           if (optimize_stmt->shouldVacuumDeletedRows()) {
             optimizer.vacuumDeletedRows();
@@ -5138,7 +5259,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
                                                 leaf_aggregator_,
                                                 *session_ptr,
                                                 *this);
-            output = validator.validate();
+            output = validator.validate(query_state_proxy);
           });
         } else {
           output = "Not running on a cluster nothing to validate";
@@ -5152,21 +5273,18 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
     if (strstr(e.what(), "java.lang.NullPointerException")) {
       THROW_MAPD_EXCEPTION(std::string("Exception: ") +
                            "query failed from broken view or other schema related issue");
+    } else if (strstr(e.what(), "Parse failed: Encountered \";\"")) {
+      throw_multiple_sql_statements_exception();
+    } else if (strstr(e.what(),
+                      "Parse failed: Encountered \"<EOF>\" at line 0, column 0")) {
+      throw_empty_sql_statement_exception();
     } else {
       THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
     }
   }
-  try {
-    // check for COPY TO stmt replace as required parser expects #~# markers
-    const auto result = apply_copy_to_shim(query_str);
-    num_parse_errors = parser.parse(result, parse_trees, last_parsed);
-  } catch (std::exception& e) {
-    THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
-  }
-  if (num_parse_errors > 0) {
-    THROW_MAPD_EXCEPTION("Syntax error at: " + last_parsed);
-  }
 
+  const auto result = apply_copy_to_shim(query_str);
+  DBHandler::parser_with_error_handler(result, parse_trees);
   auto handle_ddl = [&query_state_proxy, &session_ptr, &_return, &locks, this](
                         Parser::DDLStmt* ddl) -> bool {
     if (!ddl) {
@@ -5174,10 +5292,11 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
     }
     const auto show_create_stmt = dynamic_cast<Parser::ShowCreateTableStmt*>(ddl);
     if (show_create_stmt) {
-      // ParserNode ShowCreateTableStmt is currently unimplemented
-      throw std::runtime_error(
-          "SHOW CREATE TABLE is currently unsupported. Use `\\d` from omnisql for table "
-          "DDL.");
+      _return.execution_time_ms +=
+          measure<>::execution([&]() { ddl->execute(*session_ptr); });
+      const auto create_string = show_create_stmt->getCreateStmt();
+      convert_result(_return, ResultSet(create_string), true);
+      return true;
     }
 
     const auto import_stmt = dynamic_cast<Parser::CopyTableStmt*>(ddl);
@@ -5218,7 +5337,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
       TPlanResult result;
       CHECK(locks.empty());
       std::tie(result, locks) =
-          parse_to_ra(query_state_proxy, query_string, {}, true, mapd_parameters_);
+          parse_to_ra(query_state_proxy, query_string, {}, true, system_parameters_);
     }
     _return.execution_time_ms += measure<>::execution([&]() {
       ddl->execute(*session_ptr);
@@ -5234,11 +5353,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
         check_read_only("Non-SELECT statements");
       }
       auto ddl = dynamic_cast<Parser::DDLStmt*>(stmt.get());
-      if (handle_ddl(ddl)) {
-        if (render_handler_) {
-          render_handler_->handle_ddl(ddl);
-        }
-      } else {
+      if (!handle_ddl(ddl)) {
         auto stmtp = dynamic_cast<Parser::InsertValuesStmt*>(stmt.get());
         CHECK(stmtp);  // no other statements supported
 
@@ -5283,7 +5398,7 @@ void DBHandler::execute_rel_alg_with_filter_push_down(
                            query_state_proxy.getQueryState().getQueryStr(),
                            filter_push_down_info,
                            false,
-                           mapd_parameters_)
+                           system_parameters_)
                    .first.plan_result;
   });
 
@@ -5329,7 +5444,7 @@ std::pair<TPlanResult, lockmgr::LockedTableDescriptors> DBHandler::parse_to_ra(
     const std::string& query_str,
     const std::vector<TFilterPushDownInfo>& filter_push_down_info,
     const bool acquire_locks,
-    const SystemParameters mapd_parameters,
+    const SystemParameters system_parameters,
     bool check_privileges) {
   query_state::Timer timer = query_state_proxy.createTimer(__func__);
   ParserWrapper pw{query_str};
@@ -5348,7 +5463,7 @@ std::pair<TPlanResult, lockmgr::LockedTableDescriptors> DBHandler::parse_to_ra(
                                    filter_push_down_info,
                                    legacy_syntax_,
                                    pw.isCalciteExplain(),
-                                   mapd_parameters.enable_calcite_view_optimize,
+                                   system_parameters.enable_calcite_view_optimize,
                                    check_privileges,
                                    in_memory_session_id);
         session_cleanup_handler(in_memory_session_id);
@@ -5396,8 +5511,8 @@ std::pair<TPlanResult, lockmgr::LockedTableDescriptors> DBHandler::parse_to_ra(
               std::make_unique<lockmgr::TableSchemaLockContainer<lockmgr::WriteLock>>(
                   lockmgr::TableSchemaLockContainer<
                       lockmgr::WriteLock>::acquireTableDescriptor(*cat.get(), table)));
-          // TODO(adb): Should we be taking this lock for inserts? Are inserts even going
-          // down this path?
+          // TODO(adb): Should we be taking this lock for inserts? Are inserts even
+          // going down this path?
           locks.emplace_back(
               std::make_unique<lockmgr::TableDataLockContainer<lockmgr::WriteLock>>(
                   lockmgr::TableDataLockContainer<lockmgr::WriteLock>::acquire(
@@ -5408,6 +5523,19 @@ std::pair<TPlanResult, lockmgr::LockedTableDescriptors> DBHandler::parse_to_ra(
     return std::make_pair(result, std::move(locks));
   }
   return std::make_pair(result, lockmgr::LockedTableDescriptors{});
+}
+
+int64_t DBHandler::query_get_outer_fragment_count(const TSessionId& session,
+                                                  const std::string& select_query) {
+  auto stdlog = STDLOG(get_session_ptr(session));
+  if (!leaf_handler_) {
+    THROW_MAPD_EXCEPTION("Distributed support is disabled.");
+  }
+  try {
+    return leaf_handler_->query_get_outer_fragment_count(session, select_query);
+  } catch (std::exception& e) {
+    THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
+  }
 }
 
 void DBHandler::check_table_consistency(TTableMeta& _return,
@@ -5428,7 +5556,8 @@ void DBHandler::start_query(TPendingQuery& _return,
                             const TSessionId& leaf_session,
                             const TSessionId& parent_session,
                             const std::string& query_ra,
-                            const bool just_explain) {
+                            const bool just_explain,
+                            const std::vector<int64_t>& outer_fragment_indices) {
   auto stdlog = STDLOG(get_session_ptr(leaf_session));
   auto session_ptr = stdlog.getConstSessionInfo();
   if (!leaf_handler_) {
@@ -5437,8 +5566,12 @@ void DBHandler::start_query(TPendingQuery& _return,
   LOG(INFO) << "start_query :" << *session_ptr << " :" << just_explain;
   auto time_ms = measure<>::execution([&]() {
     try {
-      leaf_handler_->start_query(
-          _return, leaf_session, parent_session, query_ra, just_explain);
+      leaf_handler_->start_query(_return,
+                                 leaf_session,
+                                 parent_session,
+                                 query_ra,
+                                 just_explain,
+                                 outer_fragment_indices);
     } catch (std::exception& e) {
       THROW_MAPD_EXCEPTION(std::string("Exception: ") + e.what());
     }

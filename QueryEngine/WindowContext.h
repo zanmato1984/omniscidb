@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "../Analyzer/Analyzer.h"
-#include "../Chunk/Chunk.h"
+#include "Analyzer/Analyzer.h"
+#include "DataMgr/Chunk/Chunk.h"
 #include "JoinHashTableInterface.h"
 
 #include <functional>
@@ -55,6 +55,8 @@ inline bool window_function_is_aggregate(const SqlWindowFunctionKind kind) {
   }
 }
 
+class Executor;
+
 // Per-window function context which encapsulates the logic for computing the various
 // window function kinds and keeps ownership of buffers which contain the results. For
 // rank functions, the code generated for the projection simply reads the values and
@@ -66,7 +68,8 @@ class WindowFunctionContext {
   WindowFunctionContext(const Analyzer::WindowFunction* window_func,
                         const std::shared_ptr<JoinHashTableInterface>& partitions,
                         const size_t elem_count,
-                        const ExecutorDeviceType device_type);
+                        const ExecutorDeviceType device_type,
+                        std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner);
 
   WindowFunctionContext(const WindowFunctionContext&) = delete;
 
@@ -167,6 +170,7 @@ class WindowFunctionContext {
   // State for aggregate function over a window.
   AggregateState aggregate_state_;
   const ExecutorDeviceType device_type_;
+  std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
 };
 
 // Keeps track of the multiple window functions in a window query.
@@ -181,33 +185,29 @@ class WindowProjectNodeContext {
   // its own iteration order, therefore fetching a column at a given position changes
   // depending on which window function is active.
   const WindowFunctionContext* activateWindowFunctionContext(
+      Executor* executor,
       const size_t target_index) const;
 
   // Resets the active window function, which restores the regular (non-window) codegen
   // behavior.
-  static void resetWindowFunctionContext();
+  static void resetWindowFunctionContext(Executor* executor);
 
   // Gets the current active window function.
-  static WindowFunctionContext* getActiveWindowFunctionContext();
+  static WindowFunctionContext* getActiveWindowFunctionContext(Executor* executor);
 
   // Creates the context for a window function execution unit.
-  static WindowProjectNodeContext* create();
+  static WindowProjectNodeContext* create(Executor* executor);
 
   // Retrieves the context for the active window function execution unit.
-  static const WindowProjectNodeContext* get();
+  static const WindowProjectNodeContext* get(Executor* executor);
 
   // Resets the active context.
-  static void reset();
+  static void reset(Executor* executor);
 
  private:
   // A map from target index to the context associated with the window function at that
   // target index.
   std::unordered_map<size_t, std::unique_ptr<WindowFunctionContext>> window_contexts_;
-  // Singleton instance used for an execution unit which is a project with window
-  // functions.
-  static std::unique_ptr<WindowProjectNodeContext> s_instance_;
-  // The active window function. Method comments in this class describe how it's used.
-  static WindowFunctionContext* s_active_window_function_;
 };
 
 bool window_function_is_aggregate(const SqlWindowFunctionKind kind);

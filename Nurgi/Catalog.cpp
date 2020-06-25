@@ -1,5 +1,6 @@
 #include "Catalog.h"
 #include "QueryEngine/Descriptors/RowSetMemoryOwner.h"
+#include "QueryEngine/Execute.h"
 #include "QueryEngine/ResultSet.h"
 
 namespace Nurgi::Catalog {
@@ -8,7 +9,7 @@ void TableDescriptor::getRows(const MatTableData& mat_table_data) {
   std::vector<TargetInfo> targets;
   QueryMemoryDescriptor query_mem_desc(
       nullptr, mat_table_data.size, QueryDescriptionType::Projection, false);
-  auto row_set_mem_owner = std::make_shared<RowSetMemoryOwner>();
+  auto row_set_mem_owner = std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize());
   for (const auto& column : columns) {
     targets.emplace_back(TargetInfo{
         false, kCOUNT, column->type, SQLTypeInfo(kNULLT, false), false, false});

@@ -26,13 +26,15 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Chunk/Chunk.h"
+#include "DataMgr/Chunk/Chunk.h"
 #include "DataMgr/MemoryLevel.h"
 #include "FragmentDefaultValues.h"
 #include "Fragmenter/AbstractFragmenter.h"
 #include "QueryEngine/TargetValue.h"
 #include "Shared/mapd_shared_mutex.h"
 #include "Shared/types.h"
+
+class Executor;
 
 namespace Data_Namespace {
 class DataMgr;
@@ -134,7 +136,8 @@ class InsertOrderFragmenter : public AbstractFragmenter {
                      const RowDataProvider& sourceDataProvider,
                      const size_t indexOffFragmentOffsetColumn,
                      const Data_Namespace::MemoryLevel memoryLevel,
-                     UpdelRoll& updelRoll) override;
+                     UpdelRoll& updelRoll,
+                     Executor* executor) override;
 
   void updateColumn(const Catalog_Namespace::Catalog* catalog,
                     const TableDescriptor* td,

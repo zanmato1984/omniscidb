@@ -73,11 +73,11 @@ class FsiSchemaTest : public testing::Test {
                                    const std::string& server_name,
                                    const std::string& data_wrapper,
                                    const int32_t user_id) {
-    auto foreign_server = catalog->getForeignServerSkipCache(server_name);
+    auto foreign_server = catalog->getForeignServerFromStorage(server_name);
 
     ASSERT_GT(foreign_server->id, 0);
     ASSERT_EQ(server_name, foreign_server->name);
-    ASSERT_EQ(data_wrapper, foreign_server->data_wrapper.name);
+    ASSERT_EQ(data_wrapper, foreign_server->data_wrapper_type);
     ASSERT_EQ(user_id, foreign_server->user_id);
 
     ASSERT_TRUE(
@@ -96,6 +96,22 @@ class FsiSchemaTest : public testing::Test {
                   ->second);
   }
 
+  void assertFsiTablesExist() {
+    auto tables = getTables();
+    ASSERT_FALSE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
+                 tables.end());
+    ASSERT_FALSE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
+                 tables.end());
+  }
+
+  void assertFsiTablesDoNotExist() {
+    auto tables = getTables();
+    ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
+                tables.end());
+    ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
+                tables.end());
+  }
+
  private:
   SqliteConnector sqlite_connector_;
 
@@ -106,61 +122,30 @@ class FsiSchemaTest : public testing::Test {
 };
 
 TEST_F(FsiSchemaTest, FsiTablesNotCreatedWhenFsiIsDisabled) {
-  auto tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
-              tables.end());
+  assertFsiTablesDoNotExist();
 
   auto catalog = initCatalog();
-
-  tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
-              tables.end());
+  assertFsiTablesDoNotExist();
 }
 
 TEST_F(FsiSchemaTest, FsiTablesAreCreatedWhenFsiIsEnabled) {
-  auto tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
-              tables.end());
+  assertFsiTablesDoNotExist();
 
   g_enable_fsi = true;
   auto catalog = initCatalog();
-
-  tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") !=
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") !=
-              tables.end());
+  assertFsiTablesExist();
 }
 
 TEST_F(FsiSchemaTest, FsiTablesAreDroppedWhenFsiIsDisabled) {
-  auto tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
-              tables.end());
+  assertFsiTablesDoNotExist();
 
   g_enable_fsi = true;
   initCatalog();
-
-  tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") !=
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") !=
-              tables.end());
+  assertFsiTablesExist();
 
   g_enable_fsi = false;
   initCatalog();
-  tables = getTables();
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_servers") ==
-              tables.end());
-  ASSERT_TRUE(std::find(tables.begin(), tables.end(), "omnisci_foreign_tables") ==
-              tables.end());
+  assertFsiTablesDoNotExist();
 }
 
 class ForeignTablesTest : public DBHandlerTestFixture {
@@ -186,8 +171,11 @@ class ForeignTablesTest : public DBHandlerTestFixture {
 };
 
 TEST_F(ForeignTablesTest, ForeignTablesAreDroppedWhenFsiIsDisabled) {
+  const auto file_path =
+      boost::filesystem::canonical("../../Tests/FsiDataFiles/example_1.csv").string();
   sql("CREATE FOREIGN TABLE test_foreign_table (c1 int) SERVER omnisci_local_csv "
-      "WITH (file_path = 'test_file.csv');");
+      "WITH (file_path = '" +
+      file_path + "');");
   sql("CREATE TABLE test_table (c1 int);");
   sql("CREATE VIEW test_view AS SELECT * FROM test_table;");
 
@@ -213,11 +201,12 @@ TEST_F(DefaultForeignServersTest, DefaultServersAreCreatedWhenFsiIsEnabled) {
 
   assertExpectedDefaultServer(catalog.get(),
                               "omnisci_local_csv",
-                              foreign_storage::DataWrapper::CSV_WRAPPER_NAME,
+                              foreign_storage::DataWrapperType::CSV,
                               OMNISCI_ROOT_USER_ID);
+
   assertExpectedDefaultServer(catalog.get(),
                               "omnisci_local_parquet",
-                              foreign_storage::DataWrapper::PARQUET_WRAPPER_NAME,
+                              foreign_storage::DataWrapperType::PARQUET,
                               OMNISCI_ROOT_USER_ID);
 }
 

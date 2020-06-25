@@ -19,6 +19,7 @@
 
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "Catalog/SessionInfo.h"
@@ -30,6 +31,7 @@
 #include "QueryEngine/CompilationOptions.h"
 #include "QueryEngine/JoinHashTable.h"
 #include "QueryEngine/OverlapsJoinHashTable.h"
+#include "QueryEngine/QueryDispatchQueue.h"
 #include "ThriftHandler/QueryState.h"
 
 using NurgiContext = Nurgi::Context;
@@ -117,6 +119,7 @@ class QueryRunner {
   }
   std::shared_ptr<Catalog_Namespace::Catalog> getCatalog() const;
   std::shared_ptr<Calcite> getCalcite() const;
+  std::shared_ptr<Executor> getExecutor() const;
 
   bool gpusPresent() const;
   virtual void clearGpuMemory() const;
@@ -127,16 +130,24 @@ class QueryRunner {
                                             const ExecutorDeviceType device_type,
                                             const bool hoist_literals = true,
                                             const bool allow_loop_joins = true);
-  virtual ExecutionResult runSelectQuery(const std::string& query_str,
-                                         const ExecutorDeviceType device_type,
-                                         const bool hoist_literals,
-                                         const bool allow_loop_joins,
-                                         const bool just_explain = false);
-  virtual ExecutionResult runNurgiRelAlg(const std::string& nurgi_ra,
-                                         NurgiContext* nurgi_context,
-                                         const ExecutorDeviceType device_type,
-                                         const bool allow_loop_joins,
-                                         const bool just_explain = false);
+  virtual std::shared_ptr<ExecutionResult> runSelectQuery(
+      const std::string& query_str,
+      const ExecutorDeviceType device_type,
+      const bool hoist_literals,
+      const bool allow_loop_joins,
+      const bool just_explain = false);
+  virtual std::shared_ptr<ExecutionResult> runNurgiRelAlg(
+      const std::string& nurgi_ra,
+      NurgiContext* nurgi_context,
+      const ExecutorDeviceType device_type,
+      const bool allow_loop_joins,
+      const bool just_explain = false);
+  virtual std::shared_ptr<ResultSet> runSQLWithAllowingInterrupt(
+      const std::string& query_str,
+      std::shared_ptr<Executor> executor,
+      const std::string& session_id,
+      const ExecutorDeviceType device_type,
+      const unsigned interrupt_check_freq = 1000);
   virtual std::vector<std::shared_ptr<ResultSet>> runMultipleStatements(
       const std::string&,
       const ExecutorDeviceType);
@@ -150,9 +161,11 @@ class QueryRunner {
   uint64_t getNumberOfCachedJoinHashTables();
   uint64_t getNumberOfCachedBaselineJoinHashTables();
 
-  virtual ~QueryRunner() {}
+  void resizeDispatchQueue(const size_t num_executors);
 
   QueryRunner(std::unique_ptr<Catalog_Namespace::SessionInfo> session);
+
+  virtual ~QueryRunner() = default;
 
   static query_state::QueryStates query_states_;
 
@@ -178,6 +191,7 @@ class QueryRunner {
   static std::unique_ptr<QueryRunner> qr_instance_;
 
   std::shared_ptr<Catalog_Namespace::SessionInfo> session_info_;
+  std::unique_ptr<QueryDispatchQueue> dispatch_queue_;
 };
 
 class ImportDriver : public QueryRunner {

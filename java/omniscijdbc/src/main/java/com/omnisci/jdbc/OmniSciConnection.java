@@ -17,6 +17,7 @@ package com.omnisci.jdbc;
 
 import com.mapd.common.SockTransportProperties;
 import com.omnisci.thrift.server.OmniSci;
+import com.omnisci.thrift.server.TDatumType;
 import com.omnisci.thrift.server.TOmniSciException;
 import com.omnisci.thrift.server.TServerStatus;
 
@@ -307,7 +308,16 @@ public class OmniSciConnection implements java.sql.Connection, Cloneable {
   private TProtocol manageConnection() throws java.lang.Exception {
     SockTransportProperties skT = null;
     String trust_store = null;
+    if (cP.get(Connection_enums.server_trust_store) != null
+            && !cP.get(Connection_enums.server_trust_store).toString().isEmpty()) {
+      trust_store = cP.get(Connection_enums.server_trust_store).toString();
+    }
     String trust_store_pwd = null;
+    if (cP.get(Connection_enums.server_trust_store_pwd) != null
+            && !cP.get(Connection_enums.server_trust_store_pwd).toString().isEmpty()) {
+      trust_store_pwd = cP.get(Connection_enums.server_trust_store_pwd).toString();
+    }
+
     TProtocol protocol = null;
     if (this.cP.isHttpProtocol()) {
       // HTTP
@@ -793,10 +803,13 @@ public class OmniSciConnection implements java.sql.Connection, Cloneable {
   @Override
   public Array createArrayOf(String typeName, Object[] elements)
           throws SQLException { // logger.debug("Entered");
-    throw new UnsupportedOperationException("Not supported yet,"
-            + " line:" + new Throwable().getStackTrace()[0].getLineNumber()
-            + " class:" + new Throwable().getStackTrace()[0].getClassName()
-            + " method:" + new Throwable().getStackTrace()[0].getMethodName());
+    TDatumType type;
+    try {
+      type = TDatumType.valueOf(typeName.toUpperCase());
+    } catch (IllegalArgumentException ex) {
+      throw new SQLException("No matching omnisci type for " + typeName);
+    }
+    return new OmniSciArray(type, elements);
   }
 
   @Override

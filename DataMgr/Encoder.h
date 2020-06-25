@@ -157,19 +157,41 @@ class Encoder {
   //! @param replicating Pass one value and fill the chunk with it
   //! @param offset Write data starting at a given offset. Default is -1 which indicates
   //! an append, an offset of 0 rewrites the chunk up to `num_elems_to_append`.
-  virtual ChunkMetadata appendData(int8_t*& src_data,
-                                   const size_t num_elems_to_append,
-                                   const SQLTypeInfo& ti,
-                                   const bool replicating = false,
-                                   const int64_t offset = -1) = 0;
-  virtual void getMetadata(ChunkMetadata& chunkMetadata);
+  virtual std::shared_ptr<ChunkMetadata> appendData(int8_t*& src_data,
+                                                    const size_t num_elems_to_append,
+                                                    const SQLTypeInfo& ti,
+                                                    const bool replicating = false,
+                                                    const int64_t offset = -1) = 0;
+  virtual void getMetadata(const std::shared_ptr<ChunkMetadata>& chunkMetadata);
   // Only called from the executor for synthesized meta-information.
-  virtual ChunkMetadata getMetadata(const SQLTypeInfo& ti) = 0;
+  virtual std::shared_ptr<ChunkMetadata> getMetadata(const SQLTypeInfo& ti) = 0;
   virtual void updateStats(const int64_t val, const bool is_null) = 0;
   virtual void updateStats(const double val, const bool is_null) = 0;
 
   // Only called from ArrowStorageInterface to update stats on chunk of data
-  virtual void updateStats(const int8_t* const dst, const size_t numBytes) = 0;
+  virtual void updateStats(const int8_t* const src_data, const size_t num_elements) = 0;
+
+  /**
+   * Update statistics for string data without appending data.
+   *
+   * @param dataBlock - the data block with which to update statistics
+   * @param startIdx - the `start_idx` that would normally be passed to `appendData`
+   * @param numElements - the number of elements in the data block
+   */
+  virtual void updateStats(const std::vector<std::string>* const src_data,
+                           const size_t start_idx,
+                           const size_t num_elements) = 0;
+
+  /**
+   * Update statistics for array data without appending data.
+   *
+   * @param dataBlock - the data block with which to update statistics
+   * @param startIdx - the `start_idx` that would normally be passed to `appendData`
+   * @param numElements - the number of elements in the data block
+   */
+  virtual void updateStats(const std::vector<ArrayDatum>* const src_data,
+                           const size_t start_idx,
+                           const size_t num_elements) = 0;
 
   virtual void reduceStats(const Encoder&) = 0;
   virtual void copyMetadata(const Encoder* copyFromEncoder) = 0;
@@ -191,7 +213,6 @@ class Encoder {
   size_t num_elems_;
 
   Data_Namespace::AbstractBuffer* buffer_;
-  // ChunkMetadata metadataTemplate_;
 
   DecimalOverflowValidator decimal_overflow_validator_;
   DateDaysOverflowValidator date_days_overflow_validator_;

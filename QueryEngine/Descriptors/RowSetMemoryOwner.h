@@ -25,19 +25,43 @@
 #include <vector>
 
 #include "DataMgr/AbstractBuffer.h"
+#include "Shared/ArenaAllocator.h"
 #include "Shared/Logger.h"
 #include "StringDictionary/StringDictionaryProxy.h"
 
 class ResultSet;
 
+/**
+ * Handles allocations and outputs for all stages in a query, either explicitly or via a
+ * managed allocator object
+ */
 class RowSetMemoryOwner : boost::noncopyable {
  public:
+  RowSetMemoryOwner(const size_t arena_block_size)
+      : arena_block_size_(arena_block_size)
+      , allocator_(std::make_unique<Arena>(arena_block_size)) {}
+
+  int8_t* allocate(const size_t num_bytes) {
+    CHECK(allocator_);
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return reinterpret_cast<int8_t*>(allocator_->allocate(num_bytes));
+  }
+
+  int8_t* allocateCountDistinctBuffer(const size_t num_bytes) {
+    CHECK(allocator_);
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    auto ret = reinterpret_cast<int8_t*>(allocator_->allocateAndZero(num_bytes));
+    count_distinct_bitmaps_.emplace_back(
+        CountDistinctBitmapBuffer{ret, num_bytes, /*physical_buffer=*/true});
+    return ret;
+  }
+
   void addCountDistinctBuffer(int8_t* count_distinct_buffer,
                               const size_t bytes,
-                              const bool system_allocated) {
+                              const bool physical_buffer) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     count_distinct_bitmaps_.emplace_back(
-        CountDistinctBitmapBuffer{count_distinct_buffer, bytes, system_allocated});
+        CountDistinctBitmapBuffer{count_distinct_buffer, bytes, physical_buffer});
   }
 
   void addCountDistinctSet(std::set<int64_t>* count_distinct_set) {
@@ -119,11 +143,6 @@ class RowSetMemoryOwner : boost::noncopyable {
   }
 
   ~RowSetMemoryOwner() {
-    for (const auto& count_distinct_buffer : count_distinct_bitmaps_) {
-      if (count_distinct_buffer.system_allocated) {
-        free(count_distinct_buffer.ptr);
-      }
-    }
     for (auto count_distinct_set : count_distinct_sets_) {
       delete count_distinct_set;
     }
@@ -143,7 +162,7 @@ class RowSetMemoryOwner : boost::noncopyable {
   }
 
   std::shared_ptr<RowSetMemoryOwner> cloneStrDictDataOnly() {
-    auto rtn = std::make_shared<RowSetMemoryOwner>();
+    auto rtn = std::make_shared<RowSetMemoryOwner>(arena_block_size_);
     rtn->str_dict_proxy_owned_ = str_dict_proxy_owned_;
     rtn->lit_str_dict_proxy_ = lit_str_dict_proxy_;
     return rtn;
@@ -153,7 +172,7 @@ class RowSetMemoryOwner : boost::noncopyable {
   struct CountDistinctBitmapBuffer {
     int8_t* ptr;
     const size_t size;
-    const bool system_allocated;
+    const bool physical_buffer;
   };
 
   std::vector<CountDistinctBitmapBuffer> count_distinct_bitmaps_;
@@ -166,6 +185,10 @@ class RowSetMemoryOwner : boost::noncopyable {
   std::shared_ptr<StringDictionaryProxy> lit_str_dict_proxy_;
   std::vector<void*> col_buffers_;
   std::vector<Data_Namespace::AbstractBuffer*> varlen_input_buffers_;
+
+  size_t arena_block_size_;  // for cloning
+  std::unique_ptr<Arena> allocator_;
+
   mutable std::mutex state_mutex_;
 
   friend class ResultSet;

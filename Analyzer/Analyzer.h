@@ -35,6 +35,7 @@
 #include <utility>
 #include <vector>
 
+#include "../Shared/geo_types.h"
 #include "../Shared/sqldefs.h"
 #include "../Shared/sqltypes.h"
 
@@ -1446,12 +1447,10 @@ class ArrayExpr : public Expr {
  public:
   ArrayExpr(SQLTypeInfo const& array_ti,
             ExpressionPtrVector const& array_exprs,
-            int expr_index,
             bool is_null = false,
             bool local_alloc = false)
       : Expr(array_ti)
       , contained_expressions_(array_exprs)
-      , expr_index_(expr_index)
       , local_alloc_(local_alloc)
       , is_null_(is_null) {}
 
@@ -1459,7 +1458,6 @@ class ArrayExpr : public Expr {
   std::string toString() const override;
   bool operator==(Expr const& rhs) const override;
   size_t getElementCount() const { return contained_expressions_.size(); }
-  int32_t getExprIndex() const { return expr_index_; }
   bool isLocalAlloc() const { return local_alloc_; }
   bool isNull() const { return is_null_; }
 
@@ -1470,29 +1468,68 @@ class ArrayExpr : public Expr {
 
  private:
   ExpressionPtrVector contained_expressions_;
-  int expr_index_;
   bool local_alloc_;
   bool is_null_;  // constant is NULL
 };
 
 /*
- * @type GeoExpr
- * @brief Geospatial expression
+ * @type GeoUOper
+ * @brief Geo unary operation
  */
-class GeoExpr : public Expr {
+class GeoUOper : public Expr {
  public:
-  GeoExpr(const SQLTypeInfo& ti, const std::vector<std::shared_ptr<Analyzer::Expr>>& args)
-      : Expr(ti), args_(args){};
+  GeoUOper(const Geo_namespace::GeoBase::GeoOp op,
+           const SQLTypeInfo& ti,
+           const SQLTypeInfo& ti0,
+           const std::vector<std::shared_ptr<Analyzer::Expr>>& args)
+      : Expr(ti), op_(op), ti0_(ti0), args0_(args){};
 
   std::shared_ptr<Analyzer::Expr> deep_copy() const override;
 
   bool operator==(const Expr& rhs) const override;
   std::string toString() const override;
 
-  const std::vector<std::shared_ptr<Analyzer::Expr>>& getArgs() const { return args_; }
+  Geo_namespace::GeoBase::GeoOp getOp() const { return op_; }
+  const SQLTypeInfo getTypeInfo0() const { return ti0_; }
+  const std::vector<std::shared_ptr<Analyzer::Expr>>& getArgs0() const { return args0_; }
 
  private:
-  const std::vector<std::shared_ptr<Analyzer::Expr>> args_;
+  const Geo_namespace::GeoBase::GeoOp op_;
+  SQLTypeInfo ti0_;  // Type of geo input 0 (or geo output)
+  const std::vector<std::shared_ptr<Analyzer::Expr>> args0_;
+};
+
+/*
+ * @type GeoBinOper
+ * @brief Geo binary operation
+ */
+class GeoBinOper : public Expr {
+ public:
+  GeoBinOper(const Geo_namespace::GeoBase::GeoOp op,
+             const SQLTypeInfo& ti,
+             const SQLTypeInfo& ti0,
+             const SQLTypeInfo& ti1,
+             const std::vector<std::shared_ptr<Analyzer::Expr>>& args0,
+             const std::vector<std::shared_ptr<Analyzer::Expr>>& args1)
+      : Expr(ti), op_(op), ti0_(ti0), ti1_(ti1), args0_(args0), args1_(args1){};
+
+  std::shared_ptr<Analyzer::Expr> deep_copy() const override;
+
+  bool operator==(const Expr& rhs) const override;
+  std::string toString() const override;
+
+  Geo_namespace::GeoBase::GeoOp getOp() const { return op_; }
+  const SQLTypeInfo getTypeInfo0() const { return ti0_; }
+  const SQLTypeInfo getTypeInfo1() const { return ti1_; }
+  const std::vector<std::shared_ptr<Analyzer::Expr>>& getArgs0() const { return args0_; }
+  const std::vector<std::shared_ptr<Analyzer::Expr>>& getArgs1() const { return args1_; }
+
+ private:
+  const Geo_namespace::GeoBase::GeoOp op_;
+  SQLTypeInfo ti0_;  // Type of geo input 0 (or geo output)
+  SQLTypeInfo ti1_;  // Type of geo input 1
+  const std::vector<std::shared_ptr<Analyzer::Expr>> args0_;
+  const std::vector<std::shared_ptr<Analyzer::Expr>> args1_;
 };
 
 /*

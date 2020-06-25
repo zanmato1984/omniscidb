@@ -20,12 +20,11 @@
 #include "Logger.h"
 
 #ifndef __CUDACC__
+#include <boost/config.hpp>
 #include <boost/regex.hpp>
 #include <optional>
 #include <string_view>
-#endif
-
-#include <boost/config.hpp>
+#endif  // __CUDACC__
 
 #include <algorithm>
 #include <iomanip>
@@ -37,7 +36,6 @@
 void apply_shim(std::string& result,
                 const boost::regex& reg_expr,
                 const std::function<void(std::string&, const boost::smatch&)>& shim_fn);
-#endif
 
 // cat - Concatenate values of arbitrary types into a string.
 template <typename... Ts>
@@ -50,6 +48,7 @@ std::string cat(Ts&&... args) {
 #endif
   return oss.str();
 }
+#endif  // __CUDACC__
 
 std::vector<std::pair<size_t, size_t>> find_string_literals(const std::string& query);
 
@@ -124,6 +123,16 @@ bool remove_unquoted_newlines_linefeeds_and_tabs_from_sql_string(
 // Return true if string was changed, false if not.
 // Does not check for escaped quotes within string.
 bool unquote(std::string&);
+
+#ifndef __CUDACC__
+//! Quote a string while escaping any existing quotes in the string.
+std::string get_quoted_string(const std::string& filename,
+                              char quote = '"',
+                              char escape = '\\');
+
+//! Throw exception if security problems found in a filename.
+void filename_security_check(const std::string& filename);
+#endif  // __CUDACC__
 
 #ifndef __CUDACC__
 namespace {

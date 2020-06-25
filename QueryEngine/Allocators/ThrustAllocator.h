@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 
@@ -56,4 +57,5 @@ class ThrustAllocator {
   PtrMapperType raw_to_ab_ptr_;
   std::vector<Data_Namespace::AbstractBuffer*> scoped_buffers_;
   std::vector<int8_t*> default_alloc_scoped_buffers_;  // for unit tests only
+  size_t num_allocations_{0};
 };

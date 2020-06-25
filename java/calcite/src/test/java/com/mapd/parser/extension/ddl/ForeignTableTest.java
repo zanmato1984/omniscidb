@@ -202,6 +202,17 @@ public class ForeignTableTest extends DDLTest {
   }
 
   @Test
+  public void createForeignTableEscapeOption() throws Exception {
+    final JsonObject expectedJsonObject = getJsonFromFile("cft_EscapeOption.json");
+    final TPlanResult result =
+            processDdlCommand("CREATE FOREIGN TABLE test_table (test_column_1 INTEGER) "
+                    + "SERVER test_server WITH ( escape = '\\');");
+    final JsonObject actualJsonObject =
+            gson.fromJson(result.plan_result, JsonObject.class);
+    assertEquals(expectedJsonObject, actualJsonObject);
+  }
+
+  @Test
   public void createForeignTableSchema() throws Exception {
     final JsonObject expectedJsonObject = getJsonFromFile("cft_Schema.json");
     final TPlanResult result =
@@ -426,6 +437,36 @@ public class ForeignTableTest extends DDLTest {
     final JsonObject expectedJsonObject = getJsonFromFile("dft_ifExists.json");
     final TPlanResult result =
             processDdlCommand("DROP FOREIGN TABLE IF EXISTS test_table;");
+    final JsonObject actualJsonObject =
+            gson.fromJson(result.plan_result, JsonObject.class);
+    assertEquals(expectedJsonObject, actualJsonObject);
+  }
+
+  @Test
+  public void refresh_foreign_table() throws Exception {
+    final JsonObject expectedJsonObject = getJsonFromFile("refresh_foreign_table.json");
+    final TPlanResult result = processDdlCommand("REFRESH FOREIGN TABLES test_table");
+    final JsonObject actualJsonObject =
+            gson.fromJson(result.plan_result, JsonObject.class);
+    assertEquals(expectedJsonObject, actualJsonObject);
+  }
+
+  @Test
+  public void refresh_foreign_tables() throws Exception {
+    final JsonObject expectedJsonObject = getJsonFromFile("refresh_foreign_tables.json");
+    final TPlanResult result =
+            processDdlCommand("REFRESH FOREIGN TABLES test_table, test_table2");
+    final JsonObject actualJsonObject =
+            gson.fromJson(result.plan_result, JsonObject.class);
+    assertEquals(expectedJsonObject, actualJsonObject);
+  }
+
+  @Test
+  public void refresh_foreign_table_with_evict() throws Exception {
+    final JsonObject expectedJsonObject =
+            getJsonFromFile("refresh_foreign_table_with_evict.json");
+    final TPlanResult result =
+            processDdlCommand("REFRESH FOREIGN TABLES test_table WITH (evict = 'true')");
     final JsonObject actualJsonObject =
             gson.fromJson(result.plan_result, JsonObject.class);
     assertEquals(expectedJsonObject, actualJsonObject);

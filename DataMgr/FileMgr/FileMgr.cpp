@@ -37,6 +37,7 @@
 
 #include "DataMgr/FileMgr/GlobalFileMgr.h"
 #include "Shared/File.h"
+#include "Shared/checked_alloc.h"
 #include "Shared/measure.h"
 
 #define EPOCH_FILENAME "epoch"
@@ -474,7 +475,7 @@ void FileMgr::copyPage(Page& srcPage,
   CHECK(offset + numBytes <= defaultPageSize_);
   FileInfo* srcFileInfo = getFileInfoForFileId(srcPage.fileId);
   FileInfo* destFileInfo = destFileMgr->getFileInfoForFileId(destPage.fileId);
-  int8_t* buffer = new int8_t[numBytes];
+  int8_t* buffer = reinterpret_cast<int8_t*>(checked_malloc(numBytes));
 
   size_t bytesRead = srcFileInfo->read(
       srcPage.pageNum * defaultPageSize_ + offset + reservedHeaderSize, numBytes, buffer);
@@ -484,7 +485,7 @@ void FileMgr::copyPage(Page& srcPage,
       numBytes,
       buffer);
   CHECK(bytesWritten == numBytes);
-  delete[] buffer;
+  ::free(buffer);
 }
 
 void FileMgr::createEpochFile(const std::string& epochFileName) {
@@ -614,6 +615,16 @@ void FileMgr::checkpoint() {
 AbstractBuffer* FileMgr::createBuffer(const ChunkKey& key,
                                       const size_t pageSize,
                                       const size_t numBytes) {
+  mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(chunkIndexMutex_);
+  return createBufferUnlocked(key, pageSize, numBytes);
+}
+
+// The underlying implementation of createBuffer needs to be lockless since
+// some of the codepaths that call it will have already obtained a write lock
+// and should not release it until they are complete.
+AbstractBuffer* FileMgr::createBufferUnlocked(const ChunkKey& key,
+                                              const size_t pageSize,
+                                              const size_t numBytes) {
   size_t actualPageSize = pageSize;
   if (actualPageSize == 0) {
     actualPageSize = defaultPageSize_;
@@ -621,13 +632,11 @@ AbstractBuffer* FileMgr::createBuffer(const ChunkKey& key,
   /// @todo Make all accesses to chunkIndex_ thread-safe
   // we will do this lazily and not allocate space for the Chunk (i.e.
   // FileBuffer yet)
-  mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(chunkIndexMutex_);
 
   if (chunkIndex_.find(key) != chunkIndex_.end()) {
     LOG(FATAL) << "Chunk already exists for key: " << showChunk(key);
   }
   chunkIndex_[key] = new FileBuffer(this, actualPageSize, key, numBytes);
-  chunkIndexWriteLock.unlock();
   return (chunkIndex_[key]);
 }
 
@@ -742,7 +751,7 @@ AbstractBuffer* FileMgr::putBuffer(const ChunkKey& key,
   auto chunkIt = chunkIndex_.find(key);
   AbstractBuffer* chunk;
   if (chunkIt == chunkIndex_.end()) {
-    chunk = createBuffer(key, defaultPageSize_);
+    chunk = createBufferUnlocked(key, defaultPageSize_);
   } else {
     chunk = chunkIt->second;
   }
@@ -781,6 +790,8 @@ AbstractBuffer* FileMgr::putBuffer(const ChunkKey& key,
                   newChunkSize - oldChunkSize,
                   srcBuffer->getType(),
                   srcBuffer->getDeviceId());
+  } else {
+    UNREACHABLE() << "putBuffer() expects a buffer marked is_updated or is_appended";
   }
   // chunk->clearDirtyBits(); // Hack: because write and append will set dirty bits
   //@todo commenting out line above will make sure this metadata is set
@@ -929,22 +940,20 @@ chunkIt->second->encoder->numElems));
     }
 }
 */
-void FileMgr::getChunkMetadataVec(
-    std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec) {
+void FileMgr::getChunkMetadataVec(ChunkMetadataVector& chunkMetadataVec) {
   mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(chunkIndexMutex_);
   chunkMetadataVec.reserve(chunkIndex_.size());
   for (auto chunkIt = chunkIndex_.begin(); chunkIt != chunkIndex_.end(); ++chunkIt) {
     if (chunkIt->second->has_encoder) {
-      ChunkMetadata chunkMetadata;
-      chunkIt->second->encoder->getMetadata(chunkMetadata);
-      chunkMetadataVec.emplace_back(chunkIt->first, chunkMetadata);
+      auto chunk_metadata = std::make_shared<ChunkMetadata>();
+      chunkIt->second->encoder->getMetadata(chunk_metadata);
+      chunkMetadataVec.emplace_back(chunkIt->first, chunk_metadata);
     }
   }
 }
 
-void FileMgr::getChunkMetadataVecForKeyPrefix(
-    std::vector<std::pair<ChunkKey, ChunkMetadata>>& chunkMetadataVec,
-    const ChunkKey& keyPrefix) {
+void FileMgr::getChunkMetadataVecForKeyPrefix(ChunkMetadataVector& chunkMetadataVec,
+                                              const ChunkKey& keyPrefix) {
   mapd_unique_lock<mapd_shared_mutex> chunkIndexWriteLock(
       chunkIndexMutex_);  // is this guarding the right structure?  it look slike we oly
                           // read here for chunk
@@ -964,9 +973,9 @@ void FileMgr::getChunkMetadataVecForKeyPrefix(
     cout << endl;
     */
     if (chunkIt->second->has_encoder) {
-      ChunkMetadata chunkMetadata;
-      chunkIt->second->encoder->getMetadata(chunkMetadata);
-      chunkMetadataVec.emplace_back(chunkIt->first, chunkMetadata);
+      auto chunk_metadata = std::make_shared<ChunkMetadata>();
+      chunkIt->second->encoder->getMetadata(chunk_metadata);
+      chunkMetadataVec.emplace_back(chunkIt->first, chunk_metadata);
     }
     chunkIt++;
   }
@@ -1002,4 +1011,7 @@ void FileMgr::free_page(std::pair<FileInfo*, int>&& page) {
   free_pages.push_back(page);
 }
 
+void FileMgr::removeTableRelatedDS(const int db_id, const int table_id) {
+  UNREACHABLE();
+}
 }  // namespace File_Namespace

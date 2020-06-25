@@ -310,7 +310,7 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateLiteral(
         Analyzer::ExpressionPtrVector args;
         // defaulting to valid sub-type for convenience
         target_ti.set_subtype(kBOOLEAN);
-        return makeExpr<Analyzer::ArrayExpr>(target_ti, args, -1, true);
+        return makeExpr<Analyzer::ArrayExpr>(target_ti, args, true);
       }
       return makeExpr<Analyzer::Constant>(rex_literal->getTargetType(), true, Datum{0});
     }
@@ -1234,6 +1234,15 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateKeyForString(
   return makeExpr<Analyzer::KeyForStringExpr>(args[0]);
 }
 
+std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateCurrentUser(
+    const RexFunctionOperator* rex_function) const {
+  std::string user{"SESSIONLESS_USER"};
+  if (query_state_) {
+    user = query_state_->getConstSessionInfo()->get_currentUser().userName;
+  }
+  return Parser::UserLiteral::get(user);
+}
+
 std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateLower(
     const RexFunctionOperator* rex_function) const {
   const auto& args = translateFunctionArgs(rex_function);
@@ -1390,20 +1399,15 @@ Analyzer::ExpressionPtr RelAlgTranslator::translateArrayFunction(
         sql_type.set_precision(first_element_logical_type.get_precision());
       }
 
-      feature_stash_.setCPUOnlyExecutionRequired();
-      return makeExpr<Analyzer::ArrayExpr>(
-          sql_type, translated_function_args, feature_stash_.getAndBumpArrayExprCount());
+      return makeExpr<Analyzer::ArrayExpr>(sql_type, translated_function_args);
     } else {
       // defaulting to valid sub-type for convenience
       sql_type.set_subtype(kBOOLEAN);
-      return makeExpr<Analyzer::ArrayExpr>(
-          sql_type, translated_function_args, feature_stash_.getAndBumpArrayExprCount());
+      return makeExpr<Analyzer::ArrayExpr>(sql_type, translated_function_args);
     }
   } else {
-    feature_stash_.setCPUOnlyExecutionRequired();
     return makeExpr<Analyzer::ArrayExpr>(rex_function->getType(),
-                                         translateFunctionArgs(rex_function),
-                                         feature_stash_.getAndBumpArrayExprCount());
+                                         translateFunctionArgs(rex_function));
   }
 }
 
@@ -1438,6 +1442,9 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateFunction(
   }
   if (rex_function->getName() == "KEY_FOR_STRING"sv) {
     return translateKeyForString(rex_function);
+  }
+  if (rex_function->getName() == "CURRENT_USER"sv) {
+    return translateCurrentUser(rex_function);
   }
   if (g_enable_experimental_string_functions && rex_function->getName() == "LOWER"sv) {
     return translateLower(rex_function);
@@ -1582,7 +1589,20 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateFunction(
                    "ST_GeogFromText"sv,
                    "ST_Point"sv,
                    "ST_SetSRID"sv)) {
-    return translateGeoConstructor(rex_function);
+    SQLTypeInfo ti;
+    return translateGeoProjection(rex_function, ti, false);
+  }
+  if (func_resolve(rex_function->getName(),
+                   "ST_Intersection"sv,
+                   "ST_Difference"sv,
+                   "ST_Union"sv,
+                   "ST_Buffer"sv)) {
+    SQLTypeInfo ti;
+    return translateGeoBinaryConstructor(rex_function, ti, false);
+  }
+  if (func_resolve(rex_function->getName(), "ST_IsEmpty"sv, "ST_IsValid"sv)) {
+    SQLTypeInfo ti;
+    return translateGeoPredicate(rex_function, ti, false);
   }
 
   auto arg_expr_list = translateFunctionArgs(rex_function);
@@ -1609,6 +1629,16 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateFunction(
     }
   }
   ret_ti.set_notnull(arguments_not_null);
+
+  // set encoding of certain Extension Function return values
+  if (func_resolve(rex_function->getName(),
+                   "reg_hex_horiz_pixel_bin_packed"sv,
+                   "reg_hex_vert_pixel_bin_packed"sv,
+                   "rect_pixel_bin_packed"sv)) {
+    CHECK(ret_ti.get_type() == kINT);
+    ret_ti.set_compression(kENCODING_PACKED_PIXEL_COORD);
+  }
+
   return makeExpr<Analyzer::FunctionOper>(ret_ti, rex_function->getName(), arg_expr_list);
 }
 

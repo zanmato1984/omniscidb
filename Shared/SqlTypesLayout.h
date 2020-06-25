@@ -101,7 +101,8 @@ inline int64_t inline_int_null_val(const SQLTypeInfo& ti) {
 }
 
 inline int64_t inline_fixed_encoding_null_val(const SQLTypeInfo& ti) {
-  if (ti.get_compression() == kENCODING_NONE) {
+  if (ti.get_compression() == kENCODING_NONE ||
+      ti.get_compression() == kENCODING_PACKED_PIXEL_COORD) {
     return inline_int_null_val(ti);
   }
   if (ti.get_compression() == kENCODING_DATE_IN_DAYS) {
@@ -167,6 +168,9 @@ inline uint64_t exp_to_scale(const unsigned exp) {
 inline size_t get_bit_width(const SQLTypeInfo& ti) {
   const auto int_type = ti.is_decimal() ? kBIGINT : ti.get_type();
   switch (int_type) {
+    case kNULLT:
+      LOG(FATAL) << "Untyped NULL values are not supported. Please CAST any NULL "
+                    "constants to a type.";
     case kBOOLEAN:
       return 8;
     case kTINYINT:
@@ -202,7 +206,8 @@ inline size_t get_bit_width(const SQLTypeInfo& ti) {
     case kMULTIPOLYGON:
       return 32;
     default:
-      abort();
+      LOG(FATAL) << "Unhandled int_type: " << int_type;
+      return {};
   }
 }
 

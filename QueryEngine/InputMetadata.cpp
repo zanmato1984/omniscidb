@@ -42,6 +42,8 @@ Fragmenter_Namespace::TableInfo build_table_info(
     CHECK(shard_table->fragmenter);
     const auto& shard_metainfo = shard_table->fragmenter->getFragmentsForQuery();
     total_number_of_tuples += shard_metainfo.getPhysicalNumTuples();
+    table_info_all_shards.fragments.reserve(table_info_all_shards.fragments.size() +
+                                            shard_metainfo.fragments.size());
     table_info_all_shards.fragments.insert(table_info_all_shards.fragments.end(),
                                            shard_metainfo.fragments.begin(),
                                            shard_metainfo.fragments.end());
@@ -82,7 +84,7 @@ bool uses_int_meta(const SQLTypeInfo& col_ti) {
 }
 
 Fragmenter_Namespace::TableInfo synthesize_table_info(const ResultSetPtr& rows) {
-  std::deque<Fragmenter_Namespace::FragmentInfo> result;
+  std::vector<Fragmenter_Namespace::FragmentInfo> result;
   if (rows) {
     result.resize(1);
     auto& fragment = result.front();
@@ -137,7 +139,7 @@ void collect_table_infos(std::vector<InputTableInfo>& table_infos,
 
 }  // namespace
 
-std::map<int, ChunkMetadata> synthesize_metadata(const ResultSet* rows) {
+ChunkMetadataMap synthesize_metadata(const ResultSet* rows) {
   rows->moveToBegin();
   std::vector<std::vector<std::unique_ptr<Encoder>>> dummy_encoders;
   const size_t worker_count = use_parallel_algorithms(*rows) ? cpu_threads() : 1;
@@ -225,7 +227,7 @@ std::map<int, ChunkMetadata> synthesize_metadata(const ResultSet* rows) {
     }
     rows->moveToBegin();
   }
-  std::map<int, ChunkMetadata> metadata_map;
+  ChunkMetadataMap metadata_map;
   for (size_t worker_idx = 1; worker_idx < worker_count; ++worker_idx) {
     CHECK_LT(worker_idx, dummy_encoders.size());
     const auto& worker_encoders = dummy_encoders[worker_idx];
@@ -270,8 +272,7 @@ std::vector<InputTableInfo> get_table_infos(const RelAlgExecutionUnit& ra_exe_un
   return table_infos;
 }
 
-const std::map<int, ChunkMetadata>&
-Fragmenter_Namespace::FragmentInfo::getChunkMetadataMap() const {
+const ChunkMetadataMap& Fragmenter_Namespace::FragmentInfo::getChunkMetadataMap() const {
   if (resultSet && !synthesizedMetadataIsValid) {
     chunkMetadataMap = synthesize_metadata(resultSet);
     synthesizedMetadataIsValid = true;

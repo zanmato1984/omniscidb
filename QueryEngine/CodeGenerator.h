@@ -76,9 +76,10 @@ class CodeGenerator {
 
   static std::string generatePTX(const std::string& cuda_llir,
                                  llvm::TargetMachine* nvptx_target_machine,
-                                 CgenState* cgen_state);
+                                 llvm::LLVMContext& context);
 
-  static std::unique_ptr<llvm::TargetMachine> initializeNVPTXBackend();
+  static std::unique_ptr<llvm::TargetMachine> initializeNVPTXBackend(
+      const CudaMgr_Namespace::NvidiaDeviceArch arch);
 
   static bool alwaysCloneRuntimeFunction(const llvm::Function* func);
 
@@ -188,8 +189,23 @@ class CodeGenerator {
   std::vector<llvm::Value*> codegenArrayExpr(const Analyzer::ArrayExpr*,
                                              const CompilationOptions&);
 
-  std::vector<llvm::Value*> codegenGeoExpr(const Analyzer::GeoExpr*,
-                                           const CompilationOptions&);
+  std::vector<llvm::Value*> codegenGeoUOper(const Analyzer::GeoUOper*,
+                                            const CompilationOptions&);
+
+  std::vector<llvm::Value*> codegenGeoBinOper(const Analyzer::GeoBinOper*,
+                                              const CompilationOptions&);
+
+  std::vector<llvm::Value*> codegenGeosPredicateCall(const std::string&,
+                                                     std::vector<llvm::Value*>,
+                                                     const CompilationOptions&);
+
+  std::vector<llvm::Value*> codegenGeosConstructorCall(const std::string&,
+                                                       std::vector<llvm::Value*>,
+                                                       const CompilationOptions&);
+
+  std::vector<llvm::Value*> codegenGeoArgs(
+      const std::vector<std::shared_ptr<Analyzer::Expr>>&,
+      const CompilationOptions&);
 
   llvm::Value* codegenFunctionOper(const Analyzer::FunctionOper*,
                                    const CompilationOptions&);

@@ -25,8 +25,8 @@
 #ifndef QUERYENGINE_RESULTSET_H
 #define QUERYENGINE_RESULTSET_H
 
-#include "../Chunk/Chunk.h"
 #include "CardinalityEstimator.h"
+#include "DataMgr/Chunk/Chunk.h"
 #include "ResultSetBufferAccessors.h"
 #include "TargetValue.h"
 
@@ -429,10 +429,19 @@ class ResultSet {
 
   size_t getNDVEstimator() const;
 
+  struct QueryExecutionTimings {
+    // all in ms
+    int64_t executor_queue_time{0};
+    int64_t render_time{0};
+    int64_t compilation_queue_time{0};
+    int64_t kernel_queue_time{0};
+  };
+
   void setQueueTime(const int64_t queue_time);
+  void setKernelQueueTime(const int64_t kernel_queue_time);
+  void addCompilationQueueTime(const int64_t compilation_queue_time);
 
   int64_t getQueueTime() const;
-
   int64_t getRenderTime() const;
 
   void moveToBegin() const;
@@ -825,10 +834,10 @@ class ResultSet {
   mutable size_t fetched_so_far_;
   size_t drop_first_;
   size_t keep_first_;
-  const std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
+  std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner_;
   std::vector<uint32_t> permutation_;
-  int64_t queue_time_ms_;
-  int64_t render_time_ms_;
+
+  QueryExecutionTimings timings_;
   const Executor* executor_;  // TODO(alex): remove
 
   std::list<std::shared_ptr<Chunk_NS::Chunk>> chunks_;
@@ -941,4 +950,6 @@ GroupValueInfo get_group_value_reduction(int64_t* groups_buffer,
                                          const size_t that_entry_count,
                                          const uint32_t row_size_quad);
 
+std::vector<int64_t> initialize_target_values_for_storage(
+    const std::vector<TargetInfo>& targets);
 #endif  // QUERYENGINE_RESULTSET_H

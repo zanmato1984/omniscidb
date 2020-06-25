@@ -49,8 +49,8 @@ class RenderHandler {
 
   explicit RenderHandler(DBHandler* db_handler,
                          const size_t render_mem_bytes,
-                         const size_t render_poly_cache_bytes,
                          const size_t max_conncurrent_render_sessions,
+                         const bool compositor_use_last_gpu,
                          const bool enable_auto_clear_render_mem,
                          const int render_oom_retry_threshold,
                          const SystemParameters system_parameters);
@@ -90,7 +90,6 @@ class RenderHandler {
 
   QueryRenderer::QueryRenderManager* get_render_manager();
 
-  void handle_ddl(Parser::DDLStmt*);
   void shutdown();
 
   std::unique_ptr<Impl> impl_;

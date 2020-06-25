@@ -35,27 +35,17 @@ class DateDaysEncoder : public Encoder {
       , dataMax(std::numeric_limits<T>::min())
       , has_nulls(false) {}
 
-  ChunkMetadata appendData(int8_t*& src_data,
-                           const size_t num_elems_to_append,
-                           const SQLTypeInfo& ti,
-                           const bool replicating = false,
-                           const int64_t offset = -1) override {
+  std::shared_ptr<ChunkMetadata> appendData(int8_t*& src_data,
+                                            const size_t num_elems_to_append,
+                                            const SQLTypeInfo& ti,
+                                            const bool replicating = false,
+                                            const int64_t offset = -1) override {
     CHECK(ti.is_date_in_days());
     T* unencoded_data = reinterpret_cast<T*>(src_data);
     auto encoded_data = std::make_unique<V[]>(num_elems_to_append);
     for (size_t i = 0; i < num_elems_to_append; ++i) {
       size_t ri = replicating ? 0 : i;
-      if (unencoded_data[ri] == std::numeric_limits<V>::min()) {
-        has_nulls = true;
-        encoded_data.get()[i] = static_cast<V>(unencoded_data[ri]);
-      } else {
-        date_days_overflow_validator_.validate(unencoded_data[ri]);
-        encoded_data.get()[i] =
-            DateConverters::get_epoch_days_from_seconds(unencoded_data[ri]);
-        const T data = DateConverters::get_epoch_seconds_from_days(encoded_data.get()[i]);
-        dataMax = std::max(dataMax, data);
-        dataMin = std::min(dataMin, data);
-      }
+      encoded_data.get()[i] = encodeDataAndUpdateStats(unencoded_data[ri]);
     }
 
     if (offset == -1) {
@@ -74,20 +64,20 @@ class DateDaysEncoder : public Encoder {
                      static_cast<size_t>(offset));
     }
 
-    ChunkMetadata chunkMetadata;
-    getMetadata(chunkMetadata);
-    return chunkMetadata;
+    auto chunk_metadata = std::make_shared<ChunkMetadata>();
+    getMetadata(chunk_metadata);
+    return chunk_metadata;
   }
 
-  void getMetadata(ChunkMetadata& chunkMetadata) override {
+  void getMetadata(const std::shared_ptr<ChunkMetadata>& chunkMetadata) override {
     Encoder::getMetadata(chunkMetadata);
-    chunkMetadata.fillChunkStats(dataMin, dataMax, has_nulls);
+    chunkMetadata->fillChunkStats(dataMin, dataMax, has_nulls);
   }
 
   // Only called from the executor for synthesized meta-information.
-  ChunkMetadata getMetadata(const SQLTypeInfo& ti) override {
-    ChunkMetadata chunk_metadata{ti, 0, 0, ChunkStats{}};
-    chunk_metadata.fillChunkStats(dataMin, dataMax, has_nulls);
+  std::shared_ptr<ChunkMetadata> getMetadata(const SQLTypeInfo& ti) override {
+    auto chunk_metadata = std::make_shared<ChunkMetadata>(ti, 0, 0, ChunkStats{});
+    chunk_metadata->fillChunkStats(dataMin, dataMax, has_nulls);
     return chunk_metadata;
   }
 
@@ -113,8 +103,23 @@ class DateDaysEncoder : public Encoder {
     }
   }
 
-  void updateStats(const int8_t* const dst, const size_t numBytes) override {
-    CHECK(false);
+  void updateStats(const int8_t* const src_data, const size_t num_elements) override {
+    const T* unencoded_data = reinterpret_cast<const T*>(src_data);
+    for (size_t i = 0; i < num_elements; ++i) {
+      encodeDataAndUpdateStats(unencoded_data[i]);
+    }
+  }
+
+  void updateStats(const std::vector<std::string>* const src_data,
+                   const size_t start_idx,
+                   const size_t num_elements) override {
+    UNREACHABLE();
+  }
+
+  void updateStats(const std::vector<ArrayDatum>* const src_data,
+                   const size_t start_idx,
+                   const size_t num_elements) override {
+    UNREACHABLE();
   }
 
   // Only called from the executor for synthesized meta-information.
@@ -169,6 +174,21 @@ class DateDaysEncoder : public Encoder {
   T dataMax;
   bool has_nulls;
 
+ private:
+  V encodeDataAndUpdateStats(const T& unencoded_data) {
+    V encoded_data;
+    if (unencoded_data == std::numeric_limits<V>::min()) {
+      has_nulls = true;
+      encoded_data = static_cast<V>(unencoded_data);
+    } else {
+      date_days_overflow_validator_.validate(unencoded_data);
+      encoded_data = DateConverters::get_epoch_days_from_seconds(unencoded_data);
+      const T data = DateConverters::get_epoch_seconds_from_days(encoded_data);
+      dataMax = std::max(dataMax, data);
+      dataMin = std::min(dataMin, data);
+    }
+    return encoded_data;
+  }
 };  // DateDaysEncoder
 
 #endif  // DATE_DAYS_ENCODER_H

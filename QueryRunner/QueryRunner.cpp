@@ -24,9 +24,9 @@
 #include "Parser/parser.h"
 #include "QueryEngine/CalciteAdapter.h"
 #include "QueryEngine/ExtensionFunctionsWhitelist.h"
+#include "QueryEngine/QueryDispatchQueue.h"
 #include "QueryEngine/RelAlgExecutor.h"
 #include "QueryEngine/TableFunctions/TableFunctionsFactory.h"
-#include "Shared/ConfigResolve.h"
 #include "Shared/Logger.h"
 #include "Shared/StringTransform.h"
 #include "Shared/SystemParameters.h"
@@ -47,13 +47,14 @@ extern bool g_enable_filter_push_down;
 double g_gpu_mem_limit_percent{0.9};
 
 extern bool g_serialize_temp_tables;
+std::mutex calcite_lock;
 
 using namespace Catalog_Namespace;
 namespace {
 
 std::shared_ptr<Calcite> g_calcite = nullptr;
 
-void calcite_shutdown_handler() {
+void calcite_shutdown_handler() noexcept {
   if (g_calcite) {
     g_calcite->close_calcite_server();
     g_calcite.reset();
@@ -127,7 +128,8 @@ QueryRunner::QueryRunner(const char* db_path,
                          const size_t max_gpu_mem,
                          const int reserved_gpu_mem,
                          const bool create_user,
-                         const bool create_db) {
+                         const bool create_db)
+    : dispatch_queue_(std::make_unique<QueryDispatchQueue>(1)) {
   g_serialize_temp_tables = true;
 
   boost::filesystem::path base_path{db_path};
@@ -149,9 +151,9 @@ QueryRunner::QueryRunner(const char* db_path,
 
   table_functions::TableFunctionsFactory::init();
 
-  if (std::is_same<CudaBuildSelector, PreprocessorFalse>::value) {
-    uses_gpus = false;
-  }
+#ifndef HAVE_CUDA
+  uses_gpus = false;
+#endif
   SystemParameters mapd_params;
   mapd_params.gpu_buffer_mem_bytes = max_gpu_mem;
   mapd_params.aggregator = !leaf_servers.empty();
@@ -191,8 +193,13 @@ QueryRunner::QueryRunner(const char* db_path,
       cat, user, ExecutorDeviceType::GPU, "");
 }
 
+void QueryRunner::resizeDispatchQueue(const size_t num_executors) {
+  dispatch_queue_ = std::make_unique<QueryDispatchQueue>(num_executors);
+}
+
 QueryRunner::QueryRunner(std::unique_ptr<Catalog_Namespace::SessionInfo> session)
-    : session_info_(std::move(session)) {}
+    : session_info_(std::move(session))
+    , dispatch_queue_(std::make_unique<QueryDispatchQueue>(1)) {}
 
 std::shared_ptr<Catalog_Namespace::Catalog> QueryRunner::getCatalog() const {
   CHECK(session_info_);
@@ -272,8 +279,8 @@ std::shared_ptr<ResultSet> QueryRunner::runSQL(const std::string& query_str,
   if (pw.isCalcitePathPermissable()) {
     const auto execution_result =
         runSelectQuery(query_str, device_type, hoist_literals, allow_loop_joins);
-
-    return execution_result.getRows();
+    VLOG(1) << session_info_->getCatalog().getDataMgr().getSystemMemoryUsage();
+    return execution_result->getRows();
   }
 
   auto query_state = create_query_state(session_info_, query_str);
@@ -289,6 +296,70 @@ std::shared_ptr<ResultSet> QueryRunner::runSQL(const std::string& query_str,
   CHECK(insert_values_stmt);
   insert_values_stmt->execute(*session_info_);
   return nullptr;
+}
+
+std::shared_ptr<Executor> QueryRunner::getExecutor() const {
+  CHECK(session_info_);
+  CHECK(!Catalog_Namespace::SysCatalog::instance().isAggregator());
+  auto query_state = create_query_state(session_info_, "");
+  auto stdlog = STDLOG(query_state);
+  auto executor = Executor::getExecutor(Executor::UNITARY_EXECUTOR_ID);
+  return executor;
+}
+
+std::shared_ptr<ResultSet> QueryRunner::runSQLWithAllowingInterrupt(
+    const std::string& query_str,
+    std::shared_ptr<Executor> executor,
+    const std::string& session_id,
+    const ExecutorDeviceType device_type,
+    const unsigned interrupt_check_freq) {
+  CHECK(session_info_);
+  CHECK(!Catalog_Namespace::SysCatalog::instance().isAggregator());
+  auto session_info =
+      std::make_shared<Catalog_Namespace::SessionInfo>(session_info_->get_catalog_ptr(),
+                                                       session_info_->get_currentUser(),
+                                                       ExecutorDeviceType::GPU,
+                                                       session_id);
+  auto query_state = create_query_state(session_info, query_str);
+  auto stdlog = STDLOG(query_state);
+  const auto& cat = query_state->getConstSessionInfo()->getCatalog();
+  CompilationOptions co = CompilationOptions::defaults(device_type);
+
+  ExecutionOptions eo = {g_enable_columnar_output,
+                         true,
+                         false,
+                         true,
+                         false,
+                         false,
+                         false,
+                         false,
+                         10000,
+                         false,
+                         false,
+                         g_gpu_mem_limit_percent,
+                         true,
+                         interrupt_check_freq};
+  std::string query_ra{""};
+  {
+    // async query initiation for interrupt test
+    // incurs data race warning in TSAN since
+    // calcite_mgr is shared across multiple query threads
+    // so here we lock the manager during query parsing
+    std::lock_guard<std::mutex> calcite_lock_guard(calcite_lock);
+    auto calcite_mgr = cat.getCalciteMgr();
+    query_ra = calcite_mgr
+                   ->process(query_state->createQueryStateProxy(),
+                             pg_shim(query_state->getQueryStr()),
+                             {},
+                             true,
+                             false,
+                             false,
+                             true)
+                   .plan_result;
+  }
+  auto result = RelAlgExecutor(executor.get(), cat, query_ra, nullptr, query_state)
+                    .executeRelAlgQuery(co, eo, false, nullptr);
+  return result.getRows();
 }
 
 std::vector<std::shared_ptr<ResultSet>> QueryRunner::runMultipleStatements(
@@ -336,7 +407,7 @@ std::unique_ptr<Importer_NS::Loader> QueryRunner::getLoader(
 
 namespace {
 
-ExecutionResult run_select_query_with_filter_push_down(
+std::shared_ptr<ExecutionResult> run_select_query_with_filter_push_down(
     QueryStateProxy query_state_proxy,
     const ExecutorDeviceType device_type,
     const bool hoist_literals,
@@ -345,7 +416,7 @@ ExecutionResult run_select_query_with_filter_push_down(
     const bool with_filter_push_down) {
   auto const& query_state = query_state_proxy.getQueryState();
   const auto& cat = query_state.getConstSessionInfo()->getCatalog();
-  auto executor = Executor::getExecutor(cat.getCurrentDB().dbId);
+  auto executor = Executor::getExecutor(Executor::UNITARY_EXECUTOR_ID);
   CompilationOptions co = CompilationOptions::defaults(device_type);
   co.opt_level = ExecutorOptLevel::LoopStrengthReduction;
 
@@ -373,9 +444,10 @@ ExecutionResult run_select_query_with_filter_push_down(
                                       false,
                                       true)
                             .plan_result;
-  auto result = RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
-                    .executeRelAlgQuery(co, eo, false, nullptr);
-  const auto& filter_push_down_requests = result.getPushedDownFilterInfo();
+  auto result = std::make_shared<ExecutionResult>(
+      RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
+          .executeRelAlgQuery(co, eo, false, nullptr));
+  const auto& filter_push_down_requests = result->getPushedDownFilterInfo();
   if (!filter_push_down_requests.empty()) {
     std::vector<TFilterPushDownInfo> filter_push_down_info;
     for (const auto& req : filter_push_down_requests) {
@@ -407,8 +479,9 @@ ExecutionResult run_select_query_with_filter_push_down(
                                        /*just_calcite_explain=*/false,
                                        eo.gpu_input_mem_limit_percent,
                                        eo.allow_runtime_query_interrupt};
-    return RelAlgExecutor(executor.get(), cat, new_query_ra, nullptr)
-        .executeRelAlgQuery(co, eo_modified, false, nullptr);
+    return std::make_shared<ExecutionResult>(
+        RelAlgExecutor(executor.get(), cat, new_query_ra, nullptr)
+            .executeRelAlgQuery(co, eo_modified, false, nullptr));
   } else {
     return result;
   }
@@ -416,11 +489,12 @@ ExecutionResult run_select_query_with_filter_push_down(
 
 }  // namespace
 
-ExecutionResult QueryRunner::runSelectQuery(const std::string& query_str,
-                                            const ExecutorDeviceType device_type,
-                                            const bool hoist_literals,
-                                            const bool allow_loop_joins,
-                                            const bool just_explain) {
+std::shared_ptr<ExecutionResult> QueryRunner::runSelectQuery(
+    const std::string& query_str,
+    const ExecutorDeviceType device_type,
+    const bool hoist_literals,
+    const bool allow_loop_joins,
+    const bool just_explain) {
   CHECK(session_info_);
   CHECK(!Catalog_Namespace::SysCatalog::instance().isAggregator());
   auto query_state = create_query_state(session_info_, query_str);
@@ -435,43 +509,62 @@ ExecutionResult QueryRunner::runSelectQuery(const std::string& query_str,
   }
 
   const auto& cat = session_info_->getCatalog();
-  auto executor = Executor::getExecutor(cat.getCurrentDB().dbId);
-  CompilationOptions co = CompilationOptions::defaults(device_type);
-  co.opt_level = ExecutorOptLevel::LoopStrengthReduction;
 
-  ExecutionOptions eo = {g_enable_columnar_output,
-                         true,
-                         just_explain,
-                         allow_loop_joins,
-                         false,
-                         false,
-                         false,
-                         false,
-                         10000,
-                         false,
-                         false,
-                         g_gpu_mem_limit_percent,
-                         false,
-                         1000};
-  auto calcite_mgr = cat.getCalciteMgr();
-  const auto query_ra = calcite_mgr
-                            ->process(query_state->createQueryStateProxy(),
-                                      pg_shim(query_str),
-                                      {},
-                                      true,
-                                      false,
-                                      false,
-                                      true)
-                            .plan_result;
-  return RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
-      .executeRelAlgQuery(co, eo, false, nullptr);
+  std::shared_ptr<ExecutionResult> result;
+  auto query_launch_task =
+      std::make_shared<QueryDispatchQueue::Task>([&cat,
+                                                  &query_str,
+                                                  &device_type,
+                                                  &allow_loop_joins,
+                                                  &just_explain,
+                                                  &query_state,
+                                                  &result](const size_t worker_id) {
+        auto executor = Executor::getExecutor(worker_id);
+        CompilationOptions co = CompilationOptions::defaults(device_type);
+        co.opt_level = ExecutorOptLevel::LoopStrengthReduction;
+
+        ExecutionOptions eo = {g_enable_columnar_output,
+                               true,
+                               just_explain,
+                               allow_loop_joins,
+                               false,
+                               false,
+                               false,
+                               false,
+                               10000,
+                               false,
+                               false,
+                               g_gpu_mem_limit_percent,
+                               false,
+                               1000};
+        auto calcite_mgr = cat.getCalciteMgr();
+        const auto query_ra = calcite_mgr
+                                  ->process(query_state->createQueryStateProxy(),
+                                            pg_shim(query_str),
+                                            {},
+                                            true,
+                                            false,
+                                            false,
+                                            true)
+                                  .plan_result;
+        result = std::make_shared<ExecutionResult>(
+            RelAlgExecutor(executor.get(), cat, query_ra, nullptr)
+                .executeRelAlgQuery(co, eo, false, nullptr));
+      });
+  CHECK(dispatch_queue_);
+  dispatch_queue_->submit(query_launch_task);
+  auto result_future = query_launch_task->get_future();
+  result_future.get();
+  CHECK(result);
+  return result;
 }
 
-ExecutionResult QueryRunner::runNurgiRelAlg(const std::string& nurgi_ra,
-                                            NurgiContext* nurgi_context,
-                                            const ExecutorDeviceType device_type,
-                                            const bool allow_loop_joins,
-                                            const bool just_explain) {
+std::shared_ptr<ExecutionResult> QueryRunner::runNurgiRelAlg(
+    const std::string& nurgi_ra,
+    NurgiContext* nurgi_context,
+    const ExecutorDeviceType device_type,
+    const bool allow_loop_joins,
+    const bool just_explain) {
   CHECK(session_info_);
   const auto& cat = session_info_->getCatalog();
   auto executor = Executor::getExecutor(cat.getCurrentDB().dbId);
@@ -492,8 +585,9 @@ ExecutionResult QueryRunner::runNurgiRelAlg(const std::string& nurgi_ra,
                          g_gpu_mem_limit_percent,
                          false,
                          1000};
-  return RelAlgExecutor(executor.get(), cat, nurgi_ra, nurgi_context)
-      .executeRelAlgQuery(co, eo, false, nullptr);
+  return std::make_shared<ExecutionResult>(
+      RelAlgExecutor(executor.get(), cat, nurgi_ra, nurgi_context)
+          .executeRelAlgQuery(co, eo, false, nullptr));
 }
 
 const std::shared_ptr<std::vector<int32_t>>& QueryRunner::getCachedJoinHashTable(

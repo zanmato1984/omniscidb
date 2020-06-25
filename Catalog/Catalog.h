@@ -217,6 +217,7 @@ class Catalog final {
 
   static void set(const std::string& dbName, std::shared_ptr<Catalog> cat);
   static std::shared_ptr<Catalog> get(const std::string& dbName);
+  static std::shared_ptr<Catalog> get(const int32_t db_id);
   static std::shared_ptr<Catalog> get(const std::string& basePath,
                                       const DBMetadata& curDB,
                                       std::shared_ptr<Data_Namespace::DataMgr> dataMgr,
@@ -244,6 +245,27 @@ class Catalog final {
   std::vector<std::string> getTableDictDirectories(const TableDescriptor* td) const;
   std::string getColumnDictDirectory(const ColumnDescriptor* cd) const;
   std::string dumpSchema(const TableDescriptor* td) const;
+  std::string dumpCreateTable(const TableDescriptor* td,
+                              bool multiline_formatting = true,
+                              bool dump_defaults = false) const;
+
+  /**
+   * Gets the DDL statement used to create a foreign table schema.
+   *
+   * @param if_not_exists - flag that indicates whether or not to include
+   * the "IF NOT EXISTS" phrase in the DDL statement
+   * @return string containing DDL statement
+   */
+  static const std::string getForeignTableSchema(bool if_not_exists = false);
+
+  /**
+   * Gets the DDL statement used to create a foreign server schema.
+   *
+   * @param if_not_exists - flag that indicates whether or not to include
+   * the "IF NOT EXISTS" phrase in the DDL statement
+   * @return string containing DDL statement
+   */
+  static const std::string getForeignServerSchema(bool if_not_exists = false);
 
   /**
    * Creates a new foreign server DB object.
@@ -264,19 +286,52 @@ class Catalog final {
    * @return pointer to a struct containing foreign server details. nullptr is returned if
    * no foreign server exists with the given name
    */
-  foreign_storage::ForeignServer* getForeignServer(const std::string& server_name) const;
+  const foreign_storage::ForeignServer* getForeignServer(
+      const std::string& server_name) const;
 
   /**
-   * Gets a pointer to a struct containing foreign server details.
-   * Skip in-memory cache of foreign server struct when attempting to fetch foreign server
-   * details. This is mainly used for testing.
+   * Gets a pointer to a struct containing foreign server details fetched from storage.
+   * This is mainly used for testing when asserting that expected catalog data is
+   * persisted.
    *
    * @param server_name - Name of foreign server whose details will be fetched
    * @return pointer to a struct containing foreign server details. nullptr is returned if
    * no foreign server exists with the given name
    */
-  foreign_storage::ForeignServer* getForeignServerSkipCache(
+  const std::unique_ptr<const foreign_storage::ForeignServer> getForeignServerFromStorage(
       const std::string& server_name);
+
+  /**
+   * Change the owner of a Foreign Server to a new owner.
+   *
+   * @param server_name - Name of the foreign server whose owner to change
+   * @param new_owner_id - New owner's user id
+   */
+  void changeForeignServerOwner(const std::string& server_name, const int new_owner_id);
+
+  /**
+   * Set the data wrapper of a Foreign Server.
+   *
+   * @param server_name - Name of the foreign server whose data wrapper will be set
+   * @param data_wrapper - Data wrapper to use
+   */
+  void setForeignServerDataWrapper(const std::string& server_name,
+                                   const std::string& data_wrapper);
+  /**
+   * Set the options of a Foreign Server.
+   *
+   * @param server_name - Name of the foreign server whose options will be set
+   * @param options - Options to set
+   */
+  void setForeignServerOptions(const std::string& server_name,
+                               const std::string& options);
+  /**
+   * Rename a Foreign Server.
+   *
+   * @param server_name - Name of the foreign server whose name will be changed
+   * @param name - New name of server
+   */
+  void renameForeignServer(const std::string& server_name, const std::string& name);
 
   /**
    * Drops/deletes a foreign server DB object.
@@ -286,9 +341,38 @@ class Catalog final {
   void dropForeignServer(const std::string& server_name);
 
   /**
+   * Performs a query on all foreign servers accessible to user with optional filter,
+   * and returns pointers toresulting server objects
+   *
+   * @param filters - Json Value representing SQL WHERE clause to filter results, eg.:
+   * "WHERE attribute1 = value1 AND attribute2 LIKE value2", or Null Value
+   *  Array of Values with attribute, value, operator, and chain specifier after first
+   * entry
+   * @param user - user to retrieve server names
+   * @param results - results returned as a vector of pointers to
+   * const foreign_storage::ForeignServer
+   */
+  void getForeignServersForUser(
+      const rapidjson::Value* filters,
+      const UserMetadata& user,
+      std::vector<const foreign_storage::ForeignServer*>& results);
+
+  /**
    * Creates default local file servers (if they don't already exist).
    */
   void createDefaultServersIfNotExists();
+
+  /**
+   * Validates that a table or view with given name does not already exist.
+   * An exception is thrown if a table or view with given name already exists and
+   * "if_not_exists" is false.
+   *
+   * @param name - Name of table or view whose existence is checked
+   * @param if_not_exists - flag indicating whether or not existence of a table or view
+   * with given name is an exception
+   * @return true if table or view with name does not exist. Otherwise, return false
+   */
+  bool validateNonExistentTableOrView(const std::string& name, const bool if_not_exists);
 
  protected:
   void CheckAndExecuteMigrations();
@@ -403,6 +487,10 @@ class Catalog final {
                               const std::string& name_prefix) const;
   void buildForeignServerMap();
   void addForeignTableDetails();
+
+  void setForeignServerProperty(const std::string& server_name,
+                                const std::string& property,
+                                const std::string& value);
 
   /**
    * Same as createForeignServer() but without acquiring locks. This should only be called
