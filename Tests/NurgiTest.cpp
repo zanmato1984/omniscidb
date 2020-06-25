@@ -13,8 +13,8 @@ const std::string nurgi_json = R"({"rels": [
 "table": {
 "id": 100,
 "cols": [
-{"id": 200, "type": 6, "nullable": false},
-{"id": 201, "type": 6, "nullable": false}
+{"type": 6, "nullable": false},
+{"type": 6, "nullable": false}
 ]
 }
 },
@@ -37,9 +37,13 @@ const std::string nurgi_json = R"({"rels": [
 })";
 
 TEST(Nurgi, Run) {
-  std::vector<const TableData> inputs;
-  TableData output;
-  Context context{inputs, output};
+  size_t size = 0;
+  auto col_200 = new int[]{1000, 10001, 10002};
+  auto col_201 = new int[]{1100, 11001, 11002};
+  TableData tab{{{reinterpret_cast<int8_t*>(col_200), size},
+                 {reinterpret_cast<int8_t*>(col_201), size}},
+                size};
+  Context context{{{100, std::move(tab)}}, {}};
   ASSERT_EQ(run(nurgi_json, context), 0);
 }
 

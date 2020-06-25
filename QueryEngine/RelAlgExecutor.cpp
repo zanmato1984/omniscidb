@@ -15,7 +15,6 @@
  */
 
 #include "RelAlgExecutor.h"
-#include "Nurgi/Catalog.h"
 #include "Nurgi/RelAlg.h"
 #include "Parser/ParserNode.h"
 #include "QueryEngine/CalciteDeserializerUtils.h"
@@ -46,6 +45,9 @@
 #include <functional>
 #include <numeric>
 
+namespace Nurgi::Catalog {
+struct TableDescriptor;
+}
 using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 using NurgiRelScan = Nurgi::RelAlg::RelScan;
 

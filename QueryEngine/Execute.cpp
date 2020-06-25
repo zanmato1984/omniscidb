@@ -245,7 +245,7 @@ const std::shared_ptr<RowSetMemoryOwner> Executor::getRowSetMemoryOwner() const 
   return row_set_mem_owner_;
 }
 
-const TemporaryTables* Executor::getTemporaryTables() const {
+TemporaryTables* Executor::getTemporaryTables() const {
   return temporary_tables_;
 }
 
@@ -1978,9 +1978,8 @@ const ColumnDescriptor* try_get_column_descriptor(const InputColDescriptor* col_
                                                   const Catalog_Namespace::Catalog& cat) {
   const int table_id = col_desc->getScanDesc().getTableId();
   const int col_id = col_desc->getColId();
-  return col_desc->getScanDesc().getSourceType() == InputSourceType::NURGI_TABLE
-             ? nullptr
-             : get_column_descriptor_maybe(col_id, table_id, cat);
+  return get_column_descriptor_maybe(
+      col_id, table_id, cat, col_desc->getScanDesc().getNurgiTableDesc().get());
 }
 
 }  // namespace
@@ -2141,7 +2140,7 @@ FetchResult Executor::fetchChunks(
           plan_state_->columns_to_fetch_.end()) {
         memory_level_for_column = Data_Namespace::CPU_LEVEL;
       }
-      if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
+      if (col_id->getScanDesc().getSourceType() != InputSourceType::TABLE) {
         frag_col_buffers[it->second] = column_fetcher.getResultSetColumn(
             col_id.get(), memory_level_for_column, device_id);
       } else {
@@ -2269,7 +2268,7 @@ FetchResult Executor::fetchUnionChunks(
             plan_state_->columns_to_fetch_.end()) {
           memory_level_for_column = Data_Namespace::CPU_LEVEL;
         }
-        if (col_id->getScanDesc().getSourceType() == InputSourceType::RESULT) {
+        if (col_id->getScanDesc().getSourceType() != InputSourceType::TABLE) {
           VLOG(2) << "it->second="
                   << it->second  // 1 1, 3 3, 5 5, 7 7, 0 0, 2 2, 4 4, 6 6
                   << " col_id->getScanDesc().getTableId()="

@@ -111,7 +111,12 @@ std::vector<llvm::Value*> CodeGenerator::codegenColVar(const Analyzer::ColumnVar
   const auto catalog = executor()->getCatalog();
   CHECK(catalog);
   if (col_var->get_table_id() > 0) {
-    auto cd = get_column_descriptor(col_id, col_var->get_table_id(), *catalog);
+    const NurgiTableDescriptor* nurgi_td = nullptr;
+    if (const auto nurgi_col_var = dynamic_cast<const Analyzer::NurgiColumnVar*>(col_var);
+        nurgi_col_var) {
+      nurgi_td = nurgi_col_var->get_nurgi_td().get();
+    }
+    auto cd = get_column_descriptor(col_id, col_var->get_table_id(), *catalog, nurgi_td);
     if (cd->isVirtualCol) {
       CHECK(cd->columnName == "rowid");
       return {codegenRowId(col_var, co)};

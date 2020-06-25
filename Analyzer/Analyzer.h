@@ -38,6 +38,11 @@
 #include "../Shared/sqldefs.h"
 #include "../Shared/sqltypes.h"
 
+namespace Nurgi::Catalog {
+struct TableDescriptor;
+}
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+
 namespace Analyzer {
 class Expr;
 }
@@ -233,10 +238,19 @@ class ColumnVar : public Expr {
 
 class NurgiColumnVar : public ColumnVar {
  public:
-  NurgiColumnVar(const SQLTypeInfo& ti, int r, int c, int i) : ColumnVar(ti, r, c, i) {}
+  NurgiColumnVar(const SQLTypeInfo& ti,
+                 int r,
+                 int c,
+                 int i,
+                 std::shared_ptr<NurgiTableDescriptor> td)
+      : ColumnVar(ti, r, c, i), nurgi_td(td) {}
+  std::shared_ptr<NurgiTableDescriptor> get_nurgi_td() const { return nurgi_td; }
   std::shared_ptr<Analyzer::Expr> deep_copy() const override;
   bool operator==(const Expr& rhs) const override;
   std::string toString() const override;
+
+ protected:
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td;
 };
 
 /*

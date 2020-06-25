@@ -18,11 +18,13 @@
 #define QUERYENGINE_INPUTDESCRIPTORS_H
 
 #include "../Catalog/TableDescriptor.h"
-#include "../Nurgi/Catalog.h"
 #include "Shared/Logger.h"
 
 #include <memory>
 
+namespace Nurgi::Catalog {
+struct TableDescriptor;
+}
 using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 
 enum class InputSourceType { TABLE, NURGI_TABLE, RESULT };
@@ -35,8 +37,7 @@ class InputDescriptor {
       : table_id_(table_id), nest_level_(nest_level), nurgi_td_(nurgi_td) {}
 
   bool operator==(const InputDescriptor& that) const {
-    return table_id_ == that.table_id_ && nest_level_ == that.nest_level_ &&
-           nurgi_td_ == that.nurgi_td_;
+    return table_id_ == that.table_id_ && nest_level_ == that.nest_level_;
   }
 
   int getTableId() const { return table_id_; }

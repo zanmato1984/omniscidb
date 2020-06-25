@@ -44,6 +44,7 @@
 #include "../StringDictionary/LruCache.hpp"
 #include "../StringDictionary/StringDictionary.h"
 #include "../StringDictionary/StringDictionaryProxy.h"
+#include "Nurgi/Catalog.h"
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Value.h>
@@ -64,6 +65,8 @@
 #include <stack>
 #include <unordered_map>
 #include <unordered_set>
+
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 
 extern bool g_enable_watchdog;
 extern bool g_enable_dynamic_watchdog;
@@ -143,9 +146,11 @@ inline uint32_t log2_bytes(const uint32_t bytes) {
 inline const ColumnDescriptor* get_column_descriptor(
     const int col_id,
     const int table_id,
-    const Catalog_Namespace::Catalog& cat) {
+    const Catalog_Namespace::Catalog& cat,
+    const NurgiTableDescriptor* nurgi_td = nullptr) {
   CHECK_GT(table_id, 0);
-  const auto col_desc = cat.getMetadataForColumn(table_id, col_id);
+  const auto col_desc = nurgi_td ? nurgi_td->getColumnDesc(col_id).get()
+                                 : cat.getMetadataForColumn(table_id, col_id);
   CHECK(col_desc);
   return col_desc;
 }
@@ -172,9 +177,10 @@ inline std::string numeric_type_name(const SQLTypeInfo& ti) {
 inline const ColumnDescriptor* get_column_descriptor_maybe(
     const int col_id,
     const int table_id,
-    const Catalog_Namespace::Catalog& cat) {
+    const Catalog_Namespace::Catalog& cat,
+    const NurgiTableDescriptor* nurgi_td = nullptr) {
   CHECK(table_id);
-  return table_id > 0 ? get_column_descriptor(col_id, table_id, cat) : nullptr;
+  return table_id > 0 ? get_column_descriptor(col_id, table_id, cat, nurgi_td) : nullptr;
 }
 
 inline const ResultSetPtr& get_temporary_table(const TemporaryTables* temporary_tables,
@@ -389,7 +395,7 @@ class Executor {
 
   const std::shared_ptr<RowSetMemoryOwner> getRowSetMemoryOwner() const;
 
-  const TemporaryTables* getTemporaryTables() const;
+  TemporaryTables* getTemporaryTables() const;
 
   Fragmenter_Namespace::TableInfo getTableInfo(const int table_id) const;
 
@@ -980,7 +986,7 @@ class Executor {
 
   const int db_id_;
   const Catalog_Namespace::Catalog* catalog_;
-  const TemporaryTables* temporary_tables_;
+  TemporaryTables* temporary_tables_;
 
   mutable InputTableInfoCache input_table_info_cache_;
   AggregatedColRange agg_col_range_cache_;

@@ -2036,17 +2036,18 @@ const std::shared_ptr<NurgiTableDescriptor> getNurgiTableFromScanNode(
   CHECK(table_id_json.IsInt());
   const auto& table_cols_json = field(table_json, "cols");
   CHECK(table_cols_json.IsArray());
-  Nurgi::Catalog::ColumnDescriptorVec columns;
+  std::vector<std::shared_ptr<Nurgi::Catalog::ColumnDescriptor>> columns;
   for (auto cols_json_it = table_cols_json.Begin(); cols_json_it != table_cols_json.End();
        ++cols_json_it) {
-    auto col_id = json_i64(field(*cols_json_it, "id"));
+    int col_id = columns.size();
     auto col_tp = static_cast<SQLTypes>(json_i64(field(*cols_json_it, "type")));
     auto col_nullable = json_bool(field(*cols_json_it, "nullable"));
     columns.emplace_back(std::make_shared<Nurgi::Catalog::ColumnDescriptor>(
         col_id, SQLTypeInfo(col_tp, col_nullable)));
   }
-  const auto td =
-      std::make_shared<NurgiTableDescriptor>(table_id_json.GetInt(), std::move(columns));
+  auto table_id = table_id_json.GetInt();
+  const auto td = std::make_shared<NurgiTableDescriptor>(
+      table_id, std::move(columns), nurgi_context->inputs[table_id]);
   CHECK(td);
   return td;
 }
@@ -2442,7 +2443,7 @@ void RelAlgDagBuilder::build(const rapidjson::Value& query_ast,
   const auto& rels = field(query_ast, "rels");
   CHECK(rels.IsArray());
   try {
-    nodes_ = details::RelAlgDispatcher(nullptr, cat_).run(rels, lead_dag_builder);
+    nodes_ = details::RelAlgDispatcher(nurgi_context, cat_).run(rels, lead_dag_builder);
   } catch (const QueryNotSupported&) {
     throw;
   }

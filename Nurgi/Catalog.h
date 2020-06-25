@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Catalog/ColumnDescriptor.h"
+#include "Nurgi.h"
 #include "Shared/sqltypes.h"
 
 #include <map>
@@ -15,28 +17,37 @@ struct ColumnDescriptor {
   SQLTypeInfo type;
 
   ColumnDescriptor(int id_, SQLTypeInfo&& type_) : id(id_), type(std::move(type_)) {}
-};
 
-using ColumnDescriptorVec = std::vector<std::shared_ptr<ColumnDescriptor>>;
-using ColumnDescriptorMap = std::map<int, std::shared_ptr<ColumnDescriptor>>;
+  std::string getName() const { return std::to_string(id); }
+};
 
 struct TableDescriptor {
   int id;
-  ColumnDescriptorVec columns;
-  ColumnDescriptorMap columns_map;
+  std::vector<std::shared_ptr<ColumnDescriptor>> columns;
+  std::vector<std::shared_ptr<::ColumnDescriptor>> column_descs;
   ResultSetPtr rows;
 
-  TableDescriptor(int id_, ColumnDescriptorVec&& columns_)
+  TableDescriptor(int id_,
+                  std::vector<std::shared_ptr<ColumnDescriptor>>&& columns_,
+                  const TableData& table_data)
       : id(id_), columns(std::move(columns_)) {
-    for (const auto& col : columns) {
-      columns_map.emplace(col->id, col);
-    }
+    getRows(table_data);
+    getColumnDescs();
+  }
 
-    getRows();
+  std::string getColumnName(int col_id) const {
+    CHECK_LT(col_id, columns.size());
+    return columns[col_id]->getName();
+  }
+
+  std::shared_ptr<::ColumnDescriptor> getColumnDesc(int col_id) const {
+    CHECK_LT(col_id, column_descs.size());
+    return column_descs[col_id];
   }
 
  private:
-  void getRows();
+  void getRows(const TableData& table_data);
+  void getColumnDescs();
 };
 
 }  // namespace Nurgi::Catalog

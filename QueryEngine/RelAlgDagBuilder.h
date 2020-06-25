@@ -27,11 +27,13 @@
 #include "Shared/ConfigResolve.h"
 #include "Shared/sql_window_function_to_string.h"
 
-#include "Nurgi/Nurgi.h"
 #include "QueryEngine/Rendering/RenderInfo.h"
 #include "QueryEngine/TargetMetaInfo.h"
 #include "QueryEngine/TypePunning.h"
 
+namespace Nurgi {
+struct Context;
+}
 using NurgiContext = Nurgi::Context;
 using ColumnNameList = std::vector<std::string>;
 

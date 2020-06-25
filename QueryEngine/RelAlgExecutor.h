@@ -18,7 +18,6 @@
 #define QUERYENGINE_RELALGEXECUTOR_H
 
 #include "Distributed/AggregatedResult.h"
-#include "Nurgi/Nurgi.h"
 #include "QueryEngine/Descriptors/RelAlgExecutionDescriptor.h"
 #include "QueryEngine/Execute.h"
 #include "QueryEngine/InputMetadata.h"
@@ -35,6 +34,9 @@
 
 #include "StorageIOFacility.h"
 
+namespace Nurgi {
+struct Context;
+}
 using NurgiContext = Nurgi::Context;
 
 extern bool g_skip_intermediate_count;

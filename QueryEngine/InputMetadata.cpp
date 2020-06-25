@@ -120,11 +120,12 @@ void collect_table_infos(std::vector<InputTableInfo>& table_infos,
           << "Failed to find previous query result for node " << -table_id;
       table_infos.push_back({table_id, synthesize_table_info(it->second)});
     } else if (input_desc.getSourceType() == InputSourceType::NURGI_TABLE) {
-      auto nurgi_table_desc = input_desc.getNurgiTableDesc();
-      CHECK(nurgi_table_desc);
-      auto rows = nurgi_table_desc->rows;
+      auto nurgi_td = input_desc.getNurgiTableDesc();
+      CHECK(nurgi_td);
+      auto rows = nurgi_td->rows;
       CHECK(rows);
       table_infos.push_back({table_id, synthesize_table_info(rows)});
+      executor->getTemporaryTables()->emplace(-nurgi_td->id, nurgi_td->rows);
     } else {
       CHECK(input_desc.getSourceType() == InputSourceType::TABLE);
       table_infos.push_back({table_id, executor->getTableInfo(table_id)});

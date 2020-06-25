@@ -24,7 +24,6 @@
 #include "ExpressionRewrite.h"
 #include "ExtensionFunctionsBinding.h"
 #include "ExtensionFunctionsWhitelist.h"
-#include "Nurgi/Catalog.h"
 #include "Nurgi/RelAlg.h"
 #include "RelAlgDagBuilder.h"
 #include "WindowContext.h"
@@ -37,7 +36,6 @@
 #include "../Shared/sql_type_to_string.h"
 #include "../Shared/thread_count.h"
 
-using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 extern bool g_enable_watchdog;
@@ -404,7 +402,11 @@ std::shared_ptr<Analyzer::Expr> RelAlgTranslator::translateInput(
       col_ti.set_notnull(false);
     }
     return std::make_shared<Analyzer::NurgiColumnVar>(
-        col_ti, table_desc->id, col_desc->id, rte_idx);
+        col_ti,
+        table_desc->id,
+        col_desc->id,
+        rte_idx,
+        nurgi_scan_source->getTableDescriptor());
   }
   CHECK(!in_metainfo.empty()) << "for " << source->toString();
   CHECK_GE(rte_idx, 0);

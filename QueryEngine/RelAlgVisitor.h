@@ -17,11 +17,9 @@
 #ifndef QUERYENGINE_RELALGVISITOR_H
 #define QUERYENGINE_RELALGVISITOR_H
 
-#include "Nurgi/Catalog.h"
 #include "Nurgi/RelAlg.h"
 #include "RelAlgDagBuilder.h"
 
-using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 template <class T>

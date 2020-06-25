@@ -3,9 +3,7 @@
 #include "Catalog.h"
 #include "QueryEngine/RelAlgDagBuilder.h"
 
-namespace Nurgi {
-
-namespace RelAlg {
+namespace Nurgi::RelAlg {
 
 struct RelScan : public RelAlgNode {
  public:
@@ -15,10 +13,7 @@ struct RelScan : public RelAlgNode {
 
   std::shared_ptr<Catalog::TableDescriptor> getTableDescriptor() const { return td; }
 
-  const std::string getFieldName(const size_t i) const {
-    CHECK_LT(i, td->columns.size());
-    return std::to_string(i);
-  }
+  std::string getFieldName(const size_t i) const { return td->getColumnName(i); }
 
   std::string toString() const override {
     return "(NurgiRelScan<" + std::to_string(reinterpret_cast<uint64_t>(this)) + "> " +
@@ -34,6 +29,4 @@ struct RelScan : public RelAlgNode {
   std::shared_ptr<Catalog::TableDescriptor> td;
 };
 
-}  // namespace RelAlg
-
-}  // namespace Nurgi
+}  // namespace Nurgi::RelAlg

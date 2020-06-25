@@ -6,8 +6,14 @@
 namespace Nurgi {
 
 int run(const std::string& ra_str, Context& context) {
-  QueryRunner::QueryRunner::get()->runNurgiRelAlg(
-      ra_str, &context, ExecutorDeviceType::CPU, true);
+  auto device_type =
+#ifdef HAVE_CUDA
+      ExecutorDeviceType::GPU
+#else
+      ExecutorDeviceType::CPU
+#endif
+      ;
+  QueryRunner::QueryRunner::get()->runNurgiRelAlg(ra_str, &context, device_type, true);
   return 0;
 }
 

@@ -18,12 +18,10 @@
 
 #include <boost/graph/topological_sort.hpp>
 
-#include "Nurgi/Catalog.h"
 #include "Nurgi/RelAlg.h"
 #include "QueryEngine/GroupByAndAggregate.h"
 #include "QueryEngine/RelAlgDagBuilder.h"
 
-using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
 using NurgiRelScan = Nurgi::RelAlg::RelScan;
 
 ExecutionResult::ExecutionResult(const std::shared_ptr<ResultSet>& rows,

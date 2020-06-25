@@ -286,7 +286,10 @@ const int8_t* ColumnFetcher::getResultSetColumn(
     const Data_Namespace::MemoryLevel memory_level,
     const int device_id) const {
   CHECK(col_desc);
-  const auto table_id = col_desc->getScanDesc().getTableId();
+  auto table_id = col_desc->getScanDesc().getTableId();
+  if (col_desc->getScanDesc().getSourceType() == InputSourceType::NURGI_TABLE) {
+    table_id = -table_id;
+  }
   return getResultSetColumn(get_temporary_table(executor_->temporary_tables_, table_id),
                             table_id,
                             col_desc->getColId(),

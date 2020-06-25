@@ -33,9 +33,7 @@ const std::string legacy_json = R"({"rels": [
 })";
 
 TEST(NurgiLegacy, Run) {
-  std::vector<const TableData> inputs;
-  TableData output;
-  Context context{inputs, output};
+  Context context{{}, {}};
   ASSERT_EQ(run(legacy_json, context), 0);
 }
 
