@@ -37,14 +37,29 @@ const std::string nurgi_json = R"({"rels": [
 })";
 
 TEST(Nurgi, RunMatProject) {
-  size_t size = 0;
-  auto col_200 = new int[]{1000, 10001, 10002};
-  auto col_201 = new int[]{1100, 11001, 11002};
-  MatTableData tab{{{reinterpret_cast<int8_t*>(col_200), size},
-                    {reinterpret_cast<int8_t*>(col_201), size}},
+  size_t size = 3;
+  auto col_200 = std::vector<int>{1000, 10001, 10002};
+  auto col_201 = std::vector<int>{1100, 11001, 11002};
+  MatTableData tab{{{reinterpret_cast<int8_t*>(col_200.data()), size},
+                    {reinterpret_cast<int8_t*>(col_201.data()), size}},
                    size};
-  Context context{{{100, std::move(tab)}}, {}};
-  ASSERT_EQ(runMat(nurgi_json, context), 0);
+  Context context({{100, std::move(tab)}}, {});
+  auto device_type =
+#ifdef HAVE_CUDA
+      ExecutorDeviceType::GPU
+#else
+      ExecutorDeviceType::CPU
+#endif
+      ;
+  ASSERT_EQ(runMat(nurgi_json, context, device_type), 0);
+  ASSERT_EQ(context.mat_output.size, size);
+  ASSERT_EQ(context.mat_output.columns.size(), 2);
+  ASSERT_EQ(
+      std::memcmp(col_200.data(), context.mat_output.columns[1].data, sizeof(int) * size),
+      0);
+  ASSERT_EQ(
+      std::memcmp(col_201.data(), context.mat_output.columns[0].data, sizeof(int) * size),
+      0);
 }
 
 int main(int argc, char** argv) {

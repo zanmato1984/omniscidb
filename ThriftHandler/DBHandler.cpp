@@ -4721,6 +4721,7 @@ std::vector<PushedDownFilterInfo> DBHandler::execute_rel_alg(
   RelAlgExecutor ra_executor(executor.get(),
                              cat,
                              query_ra,
+                             nullptr,
                              query_state_proxy.getQueryState().shared_from_this());
   ExecutionResult result{std::make_shared<ResultSet>(std::vector<TargetInfo>{},
                                                      ExecutorDeviceType::CPU,
@@ -4791,6 +4792,7 @@ void DBHandler::execute_rel_alg_df(TDataFrame& _return,
   RelAlgExecutor ra_executor(executor.get(),
                              cat,
                              query_ra,
+                             nullptr,
                              query_state_proxy.getQueryState().shared_from_this());
   ExecutionResult result{std::make_shared<ResultSet>(std::vector<TargetInfo>{},
                                                      ExecutorDeviceType::CPU,

@@ -33,8 +33,15 @@ const std::string legacy_json = R"({"rels": [
 })";
 
 TEST(NurgiLegacy, Run) {
-  Context context{{}, {}};
-  ASSERT_EQ(runMat(legacy_json, context), 0);
+  Context context({}, {});
+  auto device_type =
+#ifdef HAVE_CUDA
+      ExecutorDeviceType::GPU
+#else
+      ExecutorDeviceType::CPU
+#endif
+      ;
+  ASSERT_EQ(runMat(legacy_json, context, device_type), 0);
 }
 
 int main(int argc, char** argv) {

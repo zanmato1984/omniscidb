@@ -98,6 +98,21 @@ Fragmenter_Namespace::TableInfo synthesize_table_info(const ResultSetPtr& rows) 
   return table_info;
 }
 
+Fragmenter_Namespace::TableInfo synthesize_table_info_from_nurgi_mat_table_data(
+    const NurgiMatTableData* nurgi_mat_table_data) {
+  std::vector<Fragmenter_Namespace::FragmentInfo> result;
+  if (nurgi_mat_table_data) {
+    result.resize(1);
+    auto& fragment = result.front();
+    fragment.fragmentId = 0;
+    fragment.deviceIds.resize(3);
+    fragment.nurgi_mat_table_data = nurgi_mat_table_data;
+  }
+  Fragmenter_Namespace::TableInfo table_info;
+  table_info.fragments = result;
+  return table_info;
+}
+
 void collect_table_infos(std::vector<InputTableInfo>& table_infos,
                          const std::vector<InputDescriptor>& input_descs,
                          Executor* executor) {
@@ -124,10 +139,9 @@ void collect_table_infos(std::vector<InputTableInfo>& table_infos,
     } else if (input_desc.getSourceType() == InputSourceType::NURGI_TABLE) {
       auto nurgi_td = input_desc.getNurgiTableDesc();
       CHECK(nurgi_td);
-      auto rows = nurgi_td->rows;
-      CHECK(rows);
-      table_infos.push_back({table_id, synthesize_table_info(rows)});
-      executor->getTemporaryTables()->emplace(-nurgi_td->id, nurgi_td->rows);
+      table_infos.push_back(
+          {table_id,
+           synthesize_table_info_from_nurgi_mat_table_data(&nurgi_td->mat_table_data)});
     } else {
       CHECK(input_desc.getSourceType() == InputSourceType::TABLE);
       table_infos.push_back({table_id, executor->getTableInfo(table_id)});
@@ -282,6 +296,9 @@ const ChunkMetadataMap& Fragmenter_Namespace::FragmentInfo::getChunkMetadataMap(
 
 size_t Fragmenter_Namespace::FragmentInfo::getNumTuples() const {
   std::unique_ptr<std::lock_guard<std::mutex>> lock;
+  if (nurgi_mat_table_data)
+    return nurgi_mat_table_data->size;
+
   if (resultSetMutex) {
     lock.reset(new std::lock_guard<std::mutex>(*resultSetMutex));
   }

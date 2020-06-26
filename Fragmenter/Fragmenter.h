@@ -26,6 +26,12 @@
 #include "../Shared/mapd_shared_mutex.h"
 #include "../Shared/types.h"
 
+namespace Nurgi {
+struct MatTableData;
+}
+
+using NurgiMatTableData = Nurgi::MatTableData;
+
 namespace Data_Namespace {
 class AbstractBuffer;
 }
@@ -83,6 +89,7 @@ class FragmentInfo {
       , physicalTableId(-1)
       , shard(-1)
       , resultSet(nullptr)
+      , nurgi_mat_table_data(nullptr)
       , numTuples(0)
       , synthesizedNumTuplesIsValid(false)
       , synthesizedMetadataIsValid(false) {}
@@ -123,6 +130,7 @@ class FragmentInfo {
   ChunkMetadataMap shadowChunkMetadataMap;
   mutable ResultSet* resultSet;
   mutable std::shared_ptr<std::mutex> resultSetMutex;
+  mutable const NurgiMatTableData* nurgi_mat_table_data;
 
  private:
   mutable size_t numTuples;

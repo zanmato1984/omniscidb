@@ -25,13 +25,12 @@ struct TableDescriptor {
   int id;
   std::vector<std::shared_ptr<ColumnDescriptor>> columns;
   std::vector<std::shared_ptr<::ColumnDescriptor>> column_descs;
-  ResultSetPtr rows;
+  const MatTableData& mat_table_data;
 
   TableDescriptor(int id_,
                   std::vector<std::shared_ptr<ColumnDescriptor>>&& columns_,
-                  const MatTableData& mat_table_data)
-      : id(id_), columns(std::move(columns_)) {
-    getRows(mat_table_data);
+                  const MatTableData& mat_table_data_)
+      : id(id_), columns(std::move(columns_)), mat_table_data(mat_table_data_) {
     getColumnDescs();
   }
 
@@ -46,7 +45,6 @@ struct TableDescriptor {
   }
 
  private:
-  void getRows(const MatTableData& mat_table_data);
   void getColumnDescs();
 };
 

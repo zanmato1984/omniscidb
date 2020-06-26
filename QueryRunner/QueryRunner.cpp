@@ -571,7 +571,7 @@ std::shared_ptr<ExecutionResult> QueryRunner::runNurgiRelAlg(
   CompilationOptions co = CompilationOptions::defaults(device_type);
   co.opt_level = ExecutorOptLevel::LoopStrengthReduction;
 
-  ExecutionOptions eo = {g_enable_columnar_output,
+  ExecutionOptions eo = {true,
                          true,
                          just_explain,
                          allow_loop_joins,

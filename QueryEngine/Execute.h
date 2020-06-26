@@ -376,7 +376,7 @@ class Executor {
 
   const std::shared_ptr<RowSetMemoryOwner> getRowSetMemoryOwner() const;
 
-  TemporaryTables* getTemporaryTables() const;
+  const TemporaryTables* getTemporaryTables() const;
 
   Fragmenter_Namespace::TableInfo getTableInfo(const int table_id) const;
 
@@ -989,7 +989,7 @@ class Executor {
 
   const ExecutorId executor_id_;
   const Catalog_Namespace::Catalog* catalog_;
-  TemporaryTables* temporary_tables_;
+  const TemporaryTables* temporary_tables_;
 
   int64_t kernel_queue_time_ms_ = 0;
   int64_t compilation_queue_time_ms_ = 0;
