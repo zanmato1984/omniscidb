@@ -1,17 +1,30 @@
 #include "Nurgi.h"
 #include "QueryEngine/Descriptors/RelAlgExecutionDescriptor.h"
+#include "QueryEngine/Execute.h"
 #include "QueryRunner/QueryRunner.h"
 
 namespace Nurgi {
 
-void Context::setResult(ResultSetPtr result_) {
-  result = result_;
+Context::Context(std::unordered_map<int, const MatTableData>&& mat_inputs_,
+                 MatTableData&& mat_output_)
+    : mat_inputs(std::move(mat_inputs_))
+    , mat_output(std::move(mat_output_))
+    , row_set_mem_owner(
+          std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize())) {}
 
-  mat_output.size = result->rowCount();
-  for (size_t i = 0; i < result->colCount(); i++) {
-    CHECK(result->isZeroCopyColumnarConversionPossible(i));
-    mat_output.columns.emplace_back(
-        MatColumnData{result->getColumnarBuffer(i), mat_output.size});
+void Context::obtainResult(std::shared_ptr<ExecutionResult> result) {
+  const ResultSet& rows = *result->getRows();
+  size_t num_cols = rows.colCount();
+  std::vector<SQLTypeInfo> col_types;
+  for (size_t i = 0; i < num_cols; ++i) {
+    col_types.emplace_back(get_logical_type_info(rows.getColType(i)));
+  }
+  ColumnarResults columnar_results(row_set_mem_owner, rows, num_cols, col_types);
+
+  mat_output.size = columnar_results.size();
+  const auto& col_bufs = columnar_results.getColumnBuffers();
+  for (size_t i = 0; i < col_bufs.size(); i++) {
+    mat_output.columns.emplace_back(MatColumnData{col_bufs[i], mat_output.size});
   }
 }
 
@@ -20,7 +33,7 @@ int runMat(const std::string& ra_str, Context& context, ExecutorDeviceType devic
     auto result = QueryRunner::QueryRunner::get()->runNurgiRelAlg(
         ra_str, &context, device_type, true);
     CHECK(result);
-    context.setResult(result->getRows());
+    context.obtainResult(result);
   } catch (const std::exception& e) {
     LOG(ERROR) << e.what();
     return -1;

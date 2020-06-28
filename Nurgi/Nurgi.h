@@ -1,6 +1,7 @@
 #pragma once
 
 #include "QueryEngine/CompilationOptions.h"
+#include "QueryEngine/Descriptors/RowSetMemoryOwner.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,8 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-class ResultSet;
-using ResultSetPtr = std::shared_ptr<ResultSet>;
+class ExecutionResult;
 
 namespace Nurgi {
 
@@ -30,13 +30,16 @@ struct Context {
   MatTableData mat_output;
 
   Context(std::unordered_map<int, const MatTableData>&& mat_inputs_,
-          MatTableData&& mat_output_)
-      : mat_inputs(std::move(mat_inputs_)), mat_output(std::move(mat_output_)) {}
-
-  void setResult(ResultSetPtr result_);
+          MatTableData&& mat_output_);
 
  private:
-  ResultSetPtr result = nullptr;
+  void obtainResult(std::shared_ptr<ExecutionResult> result);
+
+  std::shared_ptr<RowSetMemoryOwner> row_set_mem_owner;
+
+  friend int runMat(const std::string& ra_str,
+                    Context& context,
+                    ExecutorDeviceType device_type);
 };
 
 /// Run a RA on the given materialized tables.
