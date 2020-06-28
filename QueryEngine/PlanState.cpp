@@ -74,3 +74,17 @@ int PlanState::getLocalColumnId(const Analyzer::ColumnVar* col_var,
   }
   return it->second;
 }
+
+void PlanState::addNurgiTable(TableId table_id,
+                              std::shared_ptr<NurgiTableDescriptor> nurgi_table) {
+  CHECK(nurgi_tables_.find(table_id) == nurgi_tables_.end());
+  nurgi_tables_.insert(std::make_pair(table_id, nurgi_table));
+}
+
+std::shared_ptr<NurgiTableDescriptor> PlanState::getNurgiTable(TableId table_id) {
+  const auto nurgi_table_it = nurgi_tables_.find(table_id);
+  if (nurgi_table_it == nurgi_tables_.end()) {
+    return nullptr;
+  }
+  return nurgi_table_it->second;
+}

@@ -52,6 +52,7 @@ struct PlanState {
   std::unordered_map<InputColDescriptor, size_t> global_to_local_col_ids_;
   std::set<std::pair<TableId, ColumnId>> columns_to_fetch_;
   std::set<std::pair<TableId, ColumnId>> columns_to_not_fetch_;
+  std::unordered_map<int, std::shared_ptr<NurgiTableDescriptor>> nurgi_tables_;
   bool allow_lazy_fetch_;
   JoinInfo join_info_;
   const Executor* executor_;
@@ -70,4 +71,8 @@ struct PlanState {
                                col_desc.getScanDesc().getNestLevel());
     return isLazyFetchColumn(&column);
   }
+
+  void addNurgiTable(TableId table_id, std::shared_ptr<NurgiTableDescriptor> nurgi_table);
+
+  std::shared_ptr<NurgiTableDescriptor> getNurgiTable(TableId table_id);
 };

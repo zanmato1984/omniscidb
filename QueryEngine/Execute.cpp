@@ -284,7 +284,10 @@ size_t Executor::getNumBytesForFetchedRow(const std::set<int>& table_ids_to_fetc
       num_bytes += 8;
     } else {
       const auto cd =
-          catalog_->getMetadataForColumn(fetched_col_pair.first, fetched_col_pair.second);
+          get_column_descriptor(fetched_col_pair.second,
+                                fetched_col_pair.first,
+                                *catalog_,
+                                plan_state_->getNurgiTable(fetched_col_pair.first).get());
       const auto& ti = cd->columnType;
       const auto sz = ti.get_type() == kTEXT && ti.get_compression() == kENCODING_DICT
                           ? 4
@@ -313,16 +316,22 @@ std::vector<ColumnLazyFetchInfo> Executor::getColLazyFetchInfo(
       const auto col_var = dynamic_cast<const Analyzer::ColumnVar*>(target_expr);
       CHECK(col_var);
       auto col_id = col_var->get_column_id();
+      auto table_id = col_var->get_table_id();
       auto rte_idx = (col_var->get_rte_idx() == -1) ? 0 : col_var->get_rte_idx();
       auto cd = (col_var->get_table_id() > 0)
-                    ? get_column_descriptor(col_id, col_var->get_table_id(), *catalog_)
+                    ? get_column_descriptor(col_id,
+                                            table_id,
+                                            *catalog_,
+                                            plan_state_->getNurgiTable(table_id).get())
                     : nullptr;
       if (cd && IS_GEO(cd->columnType.get_type())) {
         // Geo coords cols will be processed in sequence. So we only need to track the
         // first coords col in lazy fetch info.
         {
-          auto cd0 =
-              get_column_descriptor(col_id + 1, col_var->get_table_id(), *catalog_);
+          auto cd0 = get_column_descriptor(col_id + 1,
+                                           col_var->get_table_id(),
+                                           *catalog_,
+                                           plan_state_->getNurgiTable(table_id).get());
           auto col0_ti = cd0->columnType;
           CHECK(!cd0->isVirtualCol);
           auto col0_var = makeExpr<Analyzer::ColumnVar>(
@@ -1382,6 +1391,12 @@ ResultSetPtr Executor::executeWorkUnitImpl(
 
     for (const auto target_expr : ra_exe_unit.target_exprs) {
       plan_state_->target_exprs_.push_back(target_expr);
+    }
+
+    for (const auto& input : ra_exe_unit.input_descs) {
+      if (input.getSourceType() == InputSourceType::NURGI_TABLE) {
+        plan_state_->addNurgiTable(input.getTableId(), input.getNurgiTableDesc());
+      }
     }
 
     auto dispatch = [&execution_dispatch,
@@ -3184,6 +3199,9 @@ std::pair<bool, int64_t> Executor::skipFragment(
       return {false, -1};
     }
     const auto lhs = comp_expr->get_left_operand();
+    if (dynamic_cast<const Analyzer::NurgiColumnVar*>(lhs)) {
+      return {false, -1};
+    }
     auto lhs_col = dynamic_cast<const Analyzer::ColumnVar*>(lhs);
     if (!lhs_col || !lhs_col->get_table_id() || lhs_col->get_rte_idx()) {
       // See if lhs is a simple cast that was allowed through normalize_simple_predicate
@@ -3215,7 +3233,8 @@ std::pair<bool, int64_t> Executor::skipFragment(
     bool is_rowid{false};
     size_t start_rowid{0};
     if (chunk_meta_it == fragment.getChunkMetadataMap().end()) {
-      auto cd = get_column_descriptor(col_id, table_id, *catalog_);
+      auto cd = get_column_descriptor(
+          col_id, table_id, *catalog_, plan_state_->getNurgiTable(table_id).get());
       if (cd->isVirtualCol) {
         CHECK(cd->columnName == "rowid");
         const auto& table_generation = getTableGeneration(table_id);

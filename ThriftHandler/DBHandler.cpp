@@ -5137,6 +5137,7 @@ void DBHandler::sql_execute_impl(TQueryResult& _return,
         query_ra = result.plan_result;
       });
 
+      LOG(INFO) << "query ra: " << query_ra;
       std::string query_ra_calcite_explain;
       if (pw.isCalciteExplain() && (!g_enable_filter_push_down || g_cluster)) {
         // return the ra as the result
