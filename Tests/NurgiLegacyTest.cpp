@@ -8,29 +8,21 @@ using namespace Nurgi;
 
 const std::string legacy_json = R"({"rels": [
 {
-"id": "0",
-"relOp": "EnumerableTableScan",
-"fieldNames": ["scalerank", "labelrank"],
-"table": [
-"omnisci",
-"omnisci_countries"
-],
-"inputs": []
+  "id": "0",
+  "relOp": "EnumerableTableScan",
+  "fieldNames": ["scalerank", "labelrank"],
+  "table": ["omnisci", "omnisci_countries"],
+  "inputs": []
 },
 {
-"id": "1",
-"relOp": "LogicalProject",
-"fields": [
-"y"
-],
-"exprs": [
-{
-"input": 1
+  "id": "1",
+  "relOp": "LogicalProject",
+  "fields": ["y"],
+  "exprs": [
+    {"input": 1}
+  ]
 }
-]
-}
-]
-})";
+]})";
 
 TEST(NurgiLegacy, Run) {
   Context context({}, {});
