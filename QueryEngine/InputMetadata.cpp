@@ -16,6 +16,7 @@
 
 #include "InputMetadata.h"
 #include "Execute.h"
+#include "TableOptimizer.h"
 
 #include "../Fragmenter/Fragmenter.h"
 
@@ -52,22 +53,92 @@ Fragmenter_Namespace::TableInfo build_table_info(
   return table_info_all_shards;
 }
 
-}  // namespace
+void setMetadataMinMax(ChunkMetadata& metadata) {
+  const auto& ti = metadata.sqlType;
+  switch (ti.get_type()) {
+    case kBOOLEAN: {
+      metadata.fillChunkStats(0, 1, !ti.get_notnull());
+      break;
+    }
+    case kTINYINT: {
+      metadata.fillChunkStats(std::numeric_limits<int8_t>::min(),
+                              std::numeric_limits<int8_t>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kSMALLINT: {
+      metadata.fillChunkStats(std::numeric_limits<int16_t>::min(),
+                              std::numeric_limits<int16_t>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kINT: {
+      metadata.fillChunkStats(std::numeric_limits<int32_t>::min(),
+                              std::numeric_limits<int32_t>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kBIGINT:
+    case kNUMERIC:
+    case kDECIMAL: {
+      metadata.fillChunkStats(std::numeric_limits<int64_t>::min(),
+                              std::numeric_limits<int64_t>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kTIME:
+    case kTIMESTAMP:
+    case kDATE: {
+      metadata.fillChunkStats(std::numeric_limits<int64_t>::min(),
+                              std::numeric_limits<int64_t>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kFLOAT: {
+      metadata.fillChunkStats(std::numeric_limits<float>::min(),
+                              std::numeric_limits<float>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    case kDOUBLE: {
+      metadata.fillChunkStats(std::numeric_limits<double>::min(),
+                              std::numeric_limits<double>::max(),
+                              !ti.get_notnull());
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+}
 
 Fragmenter_Namespace::TableInfo synthesize_table_info_from_nurgi_mat_table_data(
-    const NurgiMatTableData* nurgi_mat_table_data) {
+    std::shared_ptr<NurgiTableDescriptor> nurgi_td) {
+  Fragmenter_Namespace::TableInfo table_info;
   std::vector<Fragmenter_Namespace::FragmentInfo> result;
-  if (nurgi_mat_table_data) {
+  if (nurgi_td) {
     result.resize(1);
     auto& fragment = result.front();
     fragment.fragmentId = 0;
     fragment.deviceIds.resize(3);
-    fragment.nurgi_mat_table_data = nurgi_mat_table_data;
+    fragment.setPhysicalNumTuples(nurgi_td->mat_table_data.size);
+    for (const auto& column : nurgi_td->columns) {
+      const auto& ti = column->type;
+      std::shared_ptr<ChunkMetadata> metadata = std::make_shared<ChunkMetadata>(
+          ti,
+          nurgi_td->mat_table_data.size * ti.get_logical_size(),
+          nurgi_td->mat_table_data.size,
+          ChunkStats{});
+      setMetadataMinMax(*metadata);
+      fragment.setChunkMetadata(column->id, metadata);
+    }
+    table_info.setPhysicalNumTuples(nurgi_td->mat_table_data.size);
   }
-  Fragmenter_Namespace::TableInfo table_info;
   table_info.fragments = result;
   return table_info;
 }
+
+}  // namespace
 
 Fragmenter_Namespace::TableInfo InputTableInfoCache::getTableInfo(const int table_id) {
   const auto it = cache_.find(table_id);
@@ -76,7 +147,10 @@ Fragmenter_Namespace::TableInfo InputTableInfoCache::getTableInfo(const int tabl
     return copy_table_info(table_info);
   }
   if (const auto nurgi_td = executor_->getNurgiTable(table_id); nurgi_td) {
-    return synthesize_table_info_from_nurgi_mat_table_data(&nurgi_td->mat_table_data);
+    auto table_info = synthesize_table_info_from_nurgi_mat_table_data(nurgi_td);
+    auto it_ok = cache_.emplace(table_id, copy_table_info(table_info));
+    CHECK(it_ok.second);
+    return copy_table_info(table_info);
   }
   const auto cat = executor_->getCatalog();
   CHECK(cat);
@@ -143,8 +217,7 @@ void collect_table_infos(std::vector<InputTableInfo>& table_infos,
       auto nurgi_td = input_desc.getNurgiTableDesc();
       CHECK(nurgi_td);
       table_infos.push_back(
-          {table_id,
-           synthesize_table_info_from_nurgi_mat_table_data(&nurgi_td->mat_table_data)});
+          {table_id, synthesize_table_info_from_nurgi_mat_table_data(nurgi_td)});
     } else {
       CHECK(input_desc.getSourceType() == InputSourceType::TABLE);
       table_infos.push_back({table_id, executor->getTableInfo(table_id)});
@@ -299,8 +372,6 @@ const ChunkMetadataMap& Fragmenter_Namespace::FragmentInfo::getChunkMetadataMap(
 
 size_t Fragmenter_Namespace::FragmentInfo::getNumTuples() const {
   std::unique_ptr<std::lock_guard<std::mutex>> lock;
-  if (nurgi_mat_table_data)
-    return nurgi_mat_table_data->size;
 
   if (resultSetMutex) {
     lock.reset(new std::lock_guard<std::mutex>(*resultSetMutex));

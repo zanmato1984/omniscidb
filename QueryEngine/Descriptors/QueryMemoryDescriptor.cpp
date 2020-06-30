@@ -430,13 +430,7 @@ QueryMemoryDescriptor::QueryMemoryDescriptor(
         output_columnar_ = output_columnar_hint;
         break;
       case QueryDescriptionType::GroupByPerfectHash:
-        output_columnar_ =
-            output_columnar_hint && QueryMemoryDescriptor::countDescriptorsLogicallyEmpty(
-                                        count_distinct_descriptors_);
-        break;
       case QueryDescriptionType::GroupByBaselineHash:
-        output_columnar_ = output_columnar_hint;
-        break;
       case QueryDescriptionType::NonGroupedAggregate:
         output_columnar_ =
             output_columnar_hint && QueryMemoryDescriptor::countDescriptorsLogicallyEmpty(

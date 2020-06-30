@@ -6,7 +6,9 @@
 
 using namespace Nurgi;
 
-TEST(NurgiLegacy, RunMatGbyAgg) {
+// TODO: Unclear about why count result is int32 but count distinct result is int64.
+template <bool distinct, typename T>
+void run_mat_gby_agg() {
   const std::string nurgi_json = R"({"rels": [
 {
   "id": "0",
@@ -66,7 +68,8 @@ TEST(NurgiLegacy, RunMatGbyAgg) {
         "type": "BIGINT",
         "nullable": false
       },
-      "distinct": false,
+      "distinct": )" + std::string(distinct ? "true" : "false") +
+                                 "," + R"(
       "operands": [
         1
       ]
@@ -101,8 +104,17 @@ TEST(NurgiLegacy, RunMatGbyAgg) {
   ASSERT_EQ(reinterpret_cast<const int*>(context.mat_output.columns[0].data)[0], 11001);
   ASSERT_EQ(reinterpret_cast<const int*>(context.mat_output.columns[0].data)[1], 11002);
   ASSERT_EQ(context.mat_output.columns[1].size, 2);
-  ASSERT_EQ(reinterpret_cast<const int*>(context.mat_output.columns[1].data)[0], 2);
-  ASSERT_EQ(reinterpret_cast<const int*>(context.mat_output.columns[1].data)[1], 1);
+  ASSERT_EQ(reinterpret_cast<const T*>(context.mat_output.columns[1].data)[0],
+            1 + !distinct);
+  ASSERT_EQ(reinterpret_cast<const T*>(context.mat_output.columns[1].data)[1], 1);
+}
+
+TEST(NurgiLegacy, RunMatGbyAgg) {
+  run_mat_gby_agg<false, int>();
+}
+
+TEST(NurgiLegacy, RunMatGbyAggDistinct) {
+  run_mat_gby_agg<true, int64_t>();
 }
 
 int main(int argc, char** argv) {
