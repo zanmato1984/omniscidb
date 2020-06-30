@@ -108,6 +108,9 @@ TEST(NurgiLegacy, RunMatGbyAgg) {
 int main(int argc, char** argv) {
   TestHelpers::init_logger_stderr_only(argc, argv);
   testing::InitGoogleTest(&argc, argv);
+  if (argc > 1) {
+    testing::GTEST_FLAG(filter) = argv[1];
+  }
   QueryRunner::QueryRunner::init("./data");
   int err = RUN_ALL_TESTS();
   return err;
