@@ -530,6 +530,9 @@ ExpressionRange getLeafColumnRange(const Analyzer::ColumnVar* col_expr,
                                    const std::vector<InputTableInfo>& query_infos,
                                    const Executor* executor,
                                    const bool is_outer_join_proj) {
+  if (dynamic_cast<const Analyzer::NurgiColumnVar*>(col_expr)) {
+    return ExpressionRange::makeInvalidRange();
+  }
   bool has_nulls = is_outer_join_proj;
   int col_id = col_expr->get_column_id();
   const auto& col_phys_ti = col_expr->get_type_info().is_array()

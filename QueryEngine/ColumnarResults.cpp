@@ -484,6 +484,9 @@ void ColumnarResults::materializeAllColumnsGroupBy(const ResultSet& rows,
                         entry_count,
                         num_threads,
                         size_per_thread);
+
+  num_rows_ =
+      std::accumulate(non_empty_per_thread.begin(), non_empty_per_thread.end(), 0);
 }
 
 /**

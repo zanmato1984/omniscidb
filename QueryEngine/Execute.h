@@ -378,6 +378,10 @@ class Executor {
 
   const TemporaryTables* getTemporaryTables() const;
 
+  void addNurgiTable(int table_id, std::shared_ptr<NurgiTableDescriptor> nurgi_table);
+
+  std::shared_ptr<NurgiTableDescriptor> getNurgiTable(int table_id) const;
+
   Fragmenter_Namespace::TableInfo getTableInfo(const int table_id) const;
 
   const TableGeneration& getTableGeneration(const int table_id) const;
@@ -1000,6 +1004,7 @@ class Executor {
   // The active window function.
   WindowFunctionContext* active_window_function_{nullptr};
 
+  std::unordered_map<int, std::shared_ptr<NurgiTableDescriptor>> nurgi_tables_;
   mutable InputTableInfoCache input_table_info_cache_;
   AggregatedColRange agg_col_range_cache_;
   StringDictionaryGenerations string_dictionary_generations_;

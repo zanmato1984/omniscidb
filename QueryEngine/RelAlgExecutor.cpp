@@ -69,8 +69,12 @@ std::unordered_set<PhysicalInput> get_physical_inputs(
   auto phys_inputs = get_physical_inputs(ra);
   std::unordered_set<PhysicalInput> phys_inputs2;
   for (auto& phi : phys_inputs) {
-    phys_inputs2.insert(
-        PhysicalInput{cat.getColumnIdBySpi(phi.table_id, phi.col_id), phi.table_id});
+    if (phi.nurgi_td) {
+      phys_inputs2.insert(PhysicalInput{phi.col_id, phi.table_id, phi.nurgi_td});
+    } else {
+      phys_inputs2.insert(PhysicalInput{
+          cat.getColumnIdBySpi(phi.table_id, phi.col_id), phi.table_id, phi.nurgi_td});
+    }
   }
   return phys_inputs2;
 }

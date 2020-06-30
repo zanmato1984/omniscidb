@@ -27,11 +27,17 @@
 
 #include <unordered_set>
 
+namespace Nurgi::Catalog {
+struct TableDescriptor;
+}
+using NurgiTableDescriptor = Nurgi::Catalog::TableDescriptor;
+
 class RelAlgNode;
 
 struct PhysicalInput {
   int col_id;
   int table_id;
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td;
 
   bool operator==(const PhysicalInput& that) const {
     return col_id == that.col_id && table_id == that.table_id;

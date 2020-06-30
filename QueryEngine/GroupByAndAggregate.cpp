@@ -84,8 +84,13 @@ bool expr_is_rowid(const Analyzer::Expr* expr, const Catalog_Namespace::Catalog&
   if (!col) {
     return false;
   }
-  const auto cd =
-      get_column_descriptor_maybe(col->get_column_id(), col->get_table_id(), cat);
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr;
+  if (const auto nurgi_col = dynamic_cast<const Analyzer::NurgiColumnVar*>(expr);
+      nurgi_col) {
+    nurgi_td = nurgi_col->get_nurgi_td();
+  }
+  const auto cd = get_column_descriptor_maybe(
+      col->get_column_id(), col->get_table_id(), cat, nurgi_td.get());
   if (!cd || !cd->isVirtualCol) {
     return false;
   }

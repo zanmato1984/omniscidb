@@ -43,7 +43,8 @@ class RexPhysicalInputsVisitor : public RexVisitor<PhysicalInputSet> {
   PhysicalInputSet visitInput(const RexInput* input) const override {
     const auto source_ra = input->getSourceNode();
     const auto scan_ra = dynamic_cast<const RelScan*>(source_ra);
-    if (!scan_ra) {
+    const auto nurgi_scan_ra = dynamic_cast<const NurgiRelScan*>(source_ra);
+    if (!scan_ra && !nurgi_scan_ra) {
       const auto join_ra = dynamic_cast<const RelJoin*>(source_ra);
       if (join_ra) {
         const auto node_inputs = get_node_output(join_ra);
@@ -52,12 +53,22 @@ class RexPhysicalInputsVisitor : public RexVisitor<PhysicalInputSet> {
       }
       return PhysicalInputSet{};
     }
-    const auto scan_td = scan_ra->getTableDescriptor();
-    CHECK(scan_td);
-    const int col_id = input->getIndex() + 1;
-    const int table_id = scan_td->tableId;
+    int table_id = 0;
+    int col_id = 0;
+    std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr;
+    if (scan_ra) {
+      const auto scan_td = scan_ra->getTableDescriptor();
+      CHECK(scan_td);
+      table_id = scan_td->tableId;
+      col_id = input->getIndex() + 1;
+    } else {
+      nurgi_td = nurgi_scan_ra->getTableDescriptor();
+      CHECK(nurgi_td);
+      table_id = nurgi_td->id;
+      col_id = input->getIndex();
+    }
     CHECK_GT(table_id, 0);
-    return {{col_id, table_id}};
+    return {{col_id, table_id, nurgi_td}};
   }
 
   PhysicalInputSet visitSubQuery(const RexSubQuery* subquery) const override {
@@ -189,6 +200,10 @@ class RelAlgPhysicalTableInputsVisitor : public RelAlgVisitor<std::unordered_set
  public:
   std::unordered_set<int> visitScan(const RelScan* scan) const override {
     return {scan->getTableDescriptor()->tableId};
+  }
+
+  std::unordered_set<int> visitNurgiScan(const NurgiRelScan* nurgi_scan) const override {
+    return {nurgi_scan->getTableDescriptor()->id};
   }
 
  protected:

@@ -1,7 +1,5 @@
 #include "Catalog.h"
 #include "QueryEngine/Descriptors/RowSetMemoryOwner.h"
-#include "QueryEngine/Execute.h"
-#include "QueryEngine/ResultSet.h"
 
 namespace Nurgi::Catalog {
 

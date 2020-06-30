@@ -13,6 +13,8 @@ Context::Context(std::unordered_map<int, const MatTableData>&& mat_inputs_,
           std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize())) {}
 
 void Context::obtainResult(std::shared_ptr<ExecutionResult> result) {
+  // TODO: May need to consider using ResultSet directly rather than an extra copy to
+  // ColumnarResults.
   const ResultSet& rows = *result->getRows();
   size_t num_cols = rows.colCount();
   std::vector<SQLTypeInfo> col_types;

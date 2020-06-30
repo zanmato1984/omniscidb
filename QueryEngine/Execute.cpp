@@ -227,8 +227,13 @@ bool Executor::isCPUOnly() const {
 
 const ColumnDescriptor* Executor::getColumnDescriptor(
     const Analyzer::ColumnVar* col_var) const {
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr;
+  if (const auto nurgi_col_var = dynamic_cast<const Analyzer::NurgiColumnVar*>(col_var);
+      nurgi_col_var) {
+    nurgi_td = nurgi_col_var->get_nurgi_td();
+  }
   return get_column_descriptor_maybe(
-      col_var->get_column_id(), col_var->get_table_id(), *catalog_);
+      col_var->get_column_id(), col_var->get_table_id(), *catalog_, nurgi_td.get());
 }
 
 const ColumnDescriptor* Executor::getPhysicalColumnDescriptor(
@@ -238,8 +243,13 @@ const ColumnDescriptor* Executor::getPhysicalColumnDescriptor(
   if (!cd || n > cd->columnType.get_physical_cols()) {
     return nullptr;
   }
+  std::shared_ptr<NurgiTableDescriptor> nurgi_td = nullptr;
+  if (const auto nurgi_col_var = dynamic_cast<const Analyzer::NurgiColumnVar*>(col_var);
+      nurgi_col_var) {
+    nurgi_td = nurgi_col_var->get_nurgi_td();
+  }
   return get_column_descriptor_maybe(
-      col_var->get_column_id() + n, col_var->get_table_id(), *catalog_);
+      col_var->get_column_id() + n, col_var->get_table_id(), *catalog_, nurgi_td.get());
 }
 
 const Catalog_Namespace::Catalog* Executor::getCatalog() const {
@@ -256,6 +266,20 @@ const std::shared_ptr<RowSetMemoryOwner> Executor::getRowSetMemoryOwner() const 
 
 const TemporaryTables* Executor::getTemporaryTables() const {
   return temporary_tables_;
+}
+
+void Executor::addNurgiTable(int table_id,
+                             std::shared_ptr<NurgiTableDescriptor> nurgi_table) {
+  CHECK(nurgi_tables_.find(table_id) == nurgi_tables_.end());
+  nurgi_tables_.insert(std::make_pair(table_id, nurgi_table));
+}
+
+std::shared_ptr<NurgiTableDescriptor> Executor::getNurgiTable(int table_id) const {
+  const auto nurgi_table_it = nurgi_tables_.find(table_id);
+  if (nurgi_table_it == nurgi_tables_.end()) {
+    return nullptr;
+  }
+  return nurgi_table_it->second;
 }
 
 Fragmenter_Namespace::TableInfo Executor::getTableInfo(const int table_id) const {
@@ -283,11 +307,10 @@ size_t Executor::getNumBytesForFetchedRow(const std::set<int>& table_ids_to_fetc
     if (fetched_col_pair.first < 0) {
       num_bytes += 8;
     } else {
-      const auto cd =
-          get_column_descriptor(fetched_col_pair.second,
-                                fetched_col_pair.first,
-                                *catalog_,
-                                plan_state_->getNurgiTable(fetched_col_pair.first).get());
+      const auto cd = get_column_descriptor(fetched_col_pair.second,
+                                            fetched_col_pair.first,
+                                            *catalog_,
+                                            getNurgiTable(fetched_col_pair.first).get());
       const auto& ti = cd->columnType;
       const auto sz = ti.get_type() == kTEXT && ti.get_compression() == kENCODING_DICT
                           ? 4
@@ -319,10 +342,8 @@ std::vector<ColumnLazyFetchInfo> Executor::getColLazyFetchInfo(
       auto table_id = col_var->get_table_id();
       auto rte_idx = (col_var->get_rte_idx() == -1) ? 0 : col_var->get_rte_idx();
       auto cd = (col_var->get_table_id() > 0)
-                    ? get_column_descriptor(col_id,
-                                            table_id,
-                                            *catalog_,
-                                            plan_state_->getNurgiTable(table_id).get())
+                    ? get_column_descriptor(
+                          col_id, table_id, *catalog_, getNurgiTable(table_id).get())
                     : nullptr;
       if (cd && IS_GEO(cd->columnType.get_type())) {
         // Geo coords cols will be processed in sequence. So we only need to track the
@@ -331,7 +352,7 @@ std::vector<ColumnLazyFetchInfo> Executor::getColLazyFetchInfo(
           auto cd0 = get_column_descriptor(col_id + 1,
                                            col_var->get_table_id(),
                                            *catalog_,
-                                           plan_state_->getNurgiTable(table_id).get());
+                                           getNurgiTable(table_id).get());
           auto col0_ti = cd0->columnType;
           CHECK(!cd0->isVirtualCol);
           auto col0_var = makeExpr<Analyzer::ColumnVar>(
@@ -1391,12 +1412,6 @@ ResultSetPtr Executor::executeWorkUnitImpl(
 
     for (const auto target_expr : ra_exe_unit.target_exprs) {
       plan_state_->target_exprs_.push_back(target_expr);
-    }
-
-    for (const auto& input : ra_exe_unit.input_descs) {
-      if (input.getSourceType() == InputSourceType::NURGI_TABLE) {
-        plan_state_->addNurgiTable(input.getTableId(), input.getNurgiTableDesc());
-      }
     }
 
     auto dispatch = [&execution_dispatch,
@@ -3234,7 +3249,7 @@ std::pair<bool, int64_t> Executor::skipFragment(
     size_t start_rowid{0};
     if (chunk_meta_it == fragment.getChunkMetadataMap().end()) {
       auto cd = get_column_descriptor(
-          col_id, table_id, *catalog_, plan_state_->getNurgiTable(table_id).get());
+          col_id, table_id, *catalog_, getNurgiTable(table_id).get());
       if (cd->isVirtualCol) {
         CHECK(cd->columnName == "rowid");
         const auto& table_generation = getTableGeneration(table_id);
@@ -3384,12 +3399,21 @@ AggregatedColRange Executor::computeColRangesCache(
     query_infos.emplace_back(InputTableInfo{table_id, getTableInfo(table_id)});
   }
   for (const auto& phys_input : phys_inputs) {
-    const auto cd =
-        catalog_->getMetadataForColumn(phys_input.table_id, phys_input.col_id);
+    const auto cd = get_column_descriptor_maybe(
+        phys_input.col_id, phys_input.table_id, *catalog_, phys_input.nurgi_td.get());
     CHECK(cd);
     if (ExpressionRange::typeSupportsRange(cd->columnType)) {
-      const auto col_var = boost::make_unique<Analyzer::ColumnVar>(
-          cd->columnType, phys_input.table_id, phys_input.col_id, 0);
+      std::unique_ptr<Analyzer::ColumnVar> col_var = nullptr;
+      if (phys_input.nurgi_td) {
+        col_var = std::make_unique<Analyzer::NurgiColumnVar>(cd->columnType,
+                                                             phys_input.table_id,
+                                                             phys_input.col_id,
+                                                             0,
+                                                             phys_input.nurgi_td);
+      } else {
+        col_var = std::make_unique<Analyzer::ColumnVar>(
+            cd->columnType, phys_input.table_id, phys_input.col_id, 0);
+      }
       const auto col_range = getLeafColumnRange(col_var.get(), query_infos, this, false);
       agg_col_range_cache.setColRange(phys_input, col_range);
     }
@@ -3402,8 +3426,8 @@ StringDictionaryGenerations Executor::computeStringDictionaryGenerations(
   StringDictionaryGenerations string_dictionary_generations;
   CHECK(catalog_);
   for (const auto& phys_input : phys_inputs) {
-    const auto cd =
-        catalog_->getMetadataForColumn(phys_input.table_id, phys_input.col_id);
+    const auto cd = get_column_descriptor_maybe(
+        phys_input.col_id, phys_input.table_id, *catalog_, phys_input.nurgi_td.get());
     CHECK(cd);
     const auto& col_ti =
         cd->columnType.is_array() ? cd->columnType.get_elem_type() : cd->columnType;
@@ -3432,6 +3456,11 @@ TableGenerations Executor::computeTableGenerations(
 void Executor::setupCaching(const std::unordered_set<PhysicalInput>& phys_inputs,
                             const std::unordered_set<int>& phys_table_ids) {
   CHECK(catalog_);
+  for (const auto& input : phys_inputs) {
+    if (input.nurgi_td && !getNurgiTable(input.table_id)) {
+      addNurgiTable(input.table_id, input.nurgi_td);
+    }
+  }
   row_set_mem_owner_ = std::make_shared<RowSetMemoryOwner>(Executor::getArenaBlockSize());
   agg_col_range_cache_ = computeColRangesCache(phys_inputs);
   string_dictionary_generations_ = computeStringDictionaryGenerations(phys_inputs);

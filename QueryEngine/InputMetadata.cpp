@@ -54,11 +54,29 @@ Fragmenter_Namespace::TableInfo build_table_info(
 
 }  // namespace
 
+Fragmenter_Namespace::TableInfo synthesize_table_info_from_nurgi_mat_table_data(
+    const NurgiMatTableData* nurgi_mat_table_data) {
+  std::vector<Fragmenter_Namespace::FragmentInfo> result;
+  if (nurgi_mat_table_data) {
+    result.resize(1);
+    auto& fragment = result.front();
+    fragment.fragmentId = 0;
+    fragment.deviceIds.resize(3);
+    fragment.nurgi_mat_table_data = nurgi_mat_table_data;
+  }
+  Fragmenter_Namespace::TableInfo table_info;
+  table_info.fragments = result;
+  return table_info;
+}
+
 Fragmenter_Namespace::TableInfo InputTableInfoCache::getTableInfo(const int table_id) {
   const auto it = cache_.find(table_id);
   if (it != cache_.end()) {
     const auto& table_info = it->second;
     return copy_table_info(table_info);
+  }
+  if (const auto nurgi_td = executor_->getNurgiTable(table_id); nurgi_td) {
+    return synthesize_table_info_from_nurgi_mat_table_data(&nurgi_td->mat_table_data);
   }
   const auto cat = executor_->getCatalog();
   CHECK(cat);
@@ -92,21 +110,6 @@ Fragmenter_Namespace::TableInfo synthesize_table_info(const ResultSetPtr& rows) 
     fragment.deviceIds.resize(3);
     fragment.resultSet = rows.get();
     fragment.resultSetMutex.reset(new std::mutex());
-  }
-  Fragmenter_Namespace::TableInfo table_info;
-  table_info.fragments = result;
-  return table_info;
-}
-
-Fragmenter_Namespace::TableInfo synthesize_table_info_from_nurgi_mat_table_data(
-    const NurgiMatTableData* nurgi_mat_table_data) {
-  std::vector<Fragmenter_Namespace::FragmentInfo> result;
-  if (nurgi_mat_table_data) {
-    result.resize(1);
-    auto& fragment = result.front();
-    fragment.fragmentId = 0;
-    fragment.deviceIds.resize(3);
-    fragment.nurgi_mat_table_data = nurgi_mat_table_data;
   }
   Fragmenter_Namespace::TableInfo table_info;
   table_info.fragments = result;
